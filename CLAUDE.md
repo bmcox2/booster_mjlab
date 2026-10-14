@@ -21,7 +21,7 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
-- Also in `notes/`: `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Also in `notes/`: `plan.md` (Milestone 1 phases A–E with checklists), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
 - Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 
@@ -51,5 +51,6 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 
 ## Status
 - 2026-10-13: setup done; velocity baseline trained (WandB run `2wagxxko`, healthy).
-- Next: tracking task on one LAFAN clip (`whirlwind-ams/lafan_locomotion_k1`), then a first gesture clip.
+- 2026-10-14: gesture pipeline A–C mostly done. GMR at `~/projects/GMR` (own uv venv, SMPL-X models in `assets/body_models/smplx/`); data in `~/robotics/data/` (HumanML3D, amass/BMLmovi, k1_motions). First gesture: BMLmovi wave `wave_000508` (HumanML3D 000508), uploaded as `bmcox2-university-of-illinois-urbana-champaign/motion_upload/wave_000508-tracking:v0`.
+- Next: `visualize-motions` check on wave_000508 (GMR uses serial-ankle K1), then LAFAN tracking baseline, then train `Mjlab-Tracking-Flat-Booster-K1` on wave_000508.
 - Open questions for lead: club GPU access; which K1 ankle model (standard vs `-Parallel`).

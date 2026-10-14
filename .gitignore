@@ -26,3 +26,6 @@ logs/
 wandb/
 data/
 data/
+
+# Licensed SMPL-X body models (never commit)
+assets/body_models/
