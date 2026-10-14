@@ -21,3 +21,8 @@ logs/
 .ruff_cache/
 
 .vscode/
+
+logs/
+wandb/
+data/
+data/
