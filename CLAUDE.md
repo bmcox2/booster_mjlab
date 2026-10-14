@@ -21,6 +21,8 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
+- Also in `notes/`: `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 
 Key paths:
