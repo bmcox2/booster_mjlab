@@ -97,6 +97,42 @@
 - [ ] Next GPU session: LAFAN walking-clip tracking baseline, then train on wave_000508
 - [ ] Metrics: tracking error + falls over 50 rollouts
 
+## 2026-10-15: first gesture tracking run + floor-offset fix
+
+**Run: wave_000508 tracking (pre-fix clip)**
+- Task `Mjlab-Tracking-Flat-Booster-K1`, 1024 envs, motion `wave_000508-tracking:v0`
+- WandB run: `w77drafm` (2026-10-15_18-56-22)
+- 2,559 of 5,000 max iterations in ~36 min, then stopped manually
+- **GPU speed: ~0.84 s/iteration, ~31–37k env-steps/s.** Fast enough to iterate on the laptop (vs ~1.0 s/it for the velocity task at 1024 envs)
+- Results (final values):
+  - mean_reward: 5.8 → 58.8, still creeping up slowly after ~800 iterations
+  - mean_episode_length: 500 (max) from ~800 iterations on
+  - Terminations: anchor_pos / ee_body_pos → ~0 after ~800 iterations; nearly all episodes end by time_out
+  - error_body_pos 0.189 → 0.052 m; error_anchor_pos 0.425 → 0.105 m; error_joint_pos 0.42 rad
+  - Policy/mean_std: 0.62 → 0.18
+- Verdict: learns to track the clip without falling, but it trained on the **sunk v0 clip** (see below). Part of the ~0.1 m anchor error is probably the ~6.7 cm height offset the robot can't physically match. Treat this as a "before" baseline, not the milestone result
+- In `play`: ___
+
+**Problem: retargeted clips sit below the floor**
+- GMR K1 clips put the robot's lowest collision point 6.4–7.3 cm below the floor (wave_000508 −6.71, wave_000113 −6.39, wave_001104 −7.29 cm)
+- Cause, in part: GMR retargets with its own `K1_serial.xml`; in booster-mjlab's `k1.xml` the legs attach 1.5 cm lower (checked by running FK on both models with the same pose: head/arms/trunk match exactly, every leg body is 1.5 cm lower)
+- A fixed guess (`shift_height.py`, +2 cm) was far too small, so it was deleted
+
+**Fix: `tools/ground_clip.py`**
+- Runs forward kinematics on booster-mjlab's `k1.xml` (the model training uses), finds the lowest collision point over the whole clip, and shifts root z so it touches the floor. Measured per clip, not guessed
+- Verified: joint mapping matches (22 joints, 4 renamed); re-running on a grounded clip gives a 0 shift; the bounding-box estimate is within 2.6 mm of the exact mesh vertices (errs toward hovering, never sinking)
+- Batch mode: `uv run python tools/ground_clip.py ~/robotics/data/k1_motions [--upload] [--force]`
+  - writes `<name>_grounded.pkl`, skips clips already up to date
+  - `--upload` names the artifact after the original clip, so the fixed wave becomes `wave_000508-tracking:v1`
+- Documented in `docs/motion_preparation.md` ("Ground the clips first")
+- Moved a stray manual-shift clip `wave_000508_z.pkl` to Trash
+
+**Takeaways**
+- Always ground GMR clips before uploading; never train on raw `.pkl` uploads
+- Pin artifact versions explicitly (`:v1`) in `--registry-name` so runs record which clip they used
+
 ## Next
-- `visualize-motions` check on wave_000508, then LAFAN tracking baseline → train on wave_000508
+- Ground clips → `visualize-motions` check → upload grounded clips (`wave_000508-tracking:v1`)
+- Retrain `Mjlab-Tracking-Flat-Booster-K1` on `wave_000508-tracking:v1`; compare anchor/body errors to `w77drafm`
+- `play` the result; then 50-rollout fall/tracking-error eval
 - Ask lead: club GPU access; which K1 ankle model (standard vs `-Parallel`)
