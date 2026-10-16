@@ -181,9 +181,22 @@
 - Verified with MuJoCo (`mj_geomDistance` to a floor plane): both feet 0.00 mm gap every frame, no other part below the floor; upper-body joints and trunk rotation unchanged; foot xy unchanged; all joints in limits; joint jitter ≤ original GMR clips
 - Trade-off: the reference now stands with bent knees, ~1 cm lower. The 4zzjocm6 policy bent its knees on its own anyway
 
+## 2026-10-15: eval script (`eval-tracking`) + milestone eval of 4zzjocm6
+
+**Built** `src/booster_mjlab/scripts/eval_tracking.py` (entry point `uv run eval-tracking`); guide in `notes/eval-guide.md`
+- 50 parallel rollouts, frame 0 → last frame, play config (no pushes / obs noise) but per-robot physics randomization + ±0.1 rad start jitter
+- Fail = task terminations fire before clip end; reports success k/n with 95% lower bound, failure reasons/times, hand/body/joint errors, height, drift, foot tilt; saves JSON to `logs/eval/`
+- Bugs caught while validating: ran one step past the clip end (motion wrapped → robots teleported, drift read 0.0) → stop at the last frame; start-pose jitter made hands jump ~16 cm in the first 5 steps → errors skip first 0.5 s
+- Checks: untrained `model_0.pt` fails 50/50 at ~0.6 s (`ee_body_pos`); numbers match an independent rollout (height −1.1 cm, drift ~2.4 cm)
+
+**Result: 4zzjocm6 (model_4999) on wave_000508 :v2**
+- `uv run eval-tracking --wandb-run-path bmcox2-university-of-illinois-urbana-champaign/mjlab/4zzjocm6`
+- **50/50 full clip, no falls → PASS** (95% lower bound 92.9%). With `--push`: also 50/50
+- Hands 2.1 cm mean (8.4 cm worst moment); body 1.3 cm; joints arms 1.7° / head 1.8° / legs 3.3°
+- Trunk −1.1 cm vs ref; drift 2.4 cm; foot tilt L 1.6°, **R 23.1°** (right-foot roll, the thing `:v3` should fix)
+
 ## Next
-- Re-ground real clips with flattening, check in `visualize-motions`, upload (wave_000508 → `:v3`)
-- Retrain on `:v3`; compare to 4zzjocm6 (right-foot roll, leg joint errors, height gap); check feet in `play`
-- 50-rollout eval on the better run (milestone 1 metric)
-- Phase E: train wave_001104, then find more gestures
+- When the `:v3` run finishes: `uv run eval-tracking --wandb-run-path .../<v3-run-id>`; compare to 4zzjocm6, esp. right-foot tilt (23°) and leg error (3.3°). Note different motion versions; also eval v3 policy on the same clip only
+- wave_000508 meets milestone 1's bar → train wave_001104 (fast wave), eval
+- Find more gestures (target 5–10)
 - Ask lead: club GPU access; which K1 ankle model (standard vs `-Parallel`)

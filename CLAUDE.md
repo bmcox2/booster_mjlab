@@ -21,7 +21,7 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
-- Also in `notes/`: `plan.md` (Milestone 1 phases A–E with checklists), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Also in `notes/`: `eval-guide.md` (how to run/read `eval-tracking`), `plan.md` (Milestone 1 phases A–E with checklists), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
 - Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 
@@ -30,7 +30,8 @@ Key paths:
 - `src/booster_mjlab/tasks/tracking/config/k1/`: `env_cfgs.py`, `rl_cfg.py`.
 - `src/booster_mjlab/robots/booster_k1/`: robot model (`xmls/`), constants, actuators.
 - `src/booster_mjlab/motion/`: motion loading.
-- `src/booster_mjlab/scripts/`: `train`, `play`, `upload_motion`, `visualize_motions`.
+- `src/booster_mjlab/scripts/`: `train`, `play`, `upload_motion`, `visualize_motions`, `eval_tracking`.
+- `tools/ground_clip.py`: ground + flatten feet of GMR clips before upload.
 - `docs/motion_preparation.md`: converting/uploading GMR `.pkl` / BeyondMimic `.csv` clips.
 
 ## Commands
@@ -55,5 +56,6 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-15: first tracking run `w77drafm` (wave_000508 v0, 1024 envs, ~0.84 s/it) learned without falls, but v0 clips were 6–7 cm below the floor. Fix: `tools/ground_clip.py` (run on every GMR clip before upload).
 - 2026-10-15: run `4zzjocm6` on grounded `wave_000508-tracking:v2`: done, no falls, body error 0.016 m. Robot sits 1.1 cm below the reference because the GMR clip's feet are tilted 6–9°.
 - 2026-10-15: `ground_clip.py` now flattens stance feet (GMR clips stood on 6–12° tilted feet; policy rolled the right ankle). Default on; `--keep-foot-tilt` to skip.
-- Next: re-ground + upload wave_000508 `:v3`, retrain, compare to 4zzjocm6, then 50-rollout eval.
+- 2026-10-15: `uv run eval-tracking` built (guide: `notes/eval-guide.md`). 4zzjocm6 on wave_000508 v2: 50/50 PASS, hands 2.1 cm, right foot rolls 23°.
+- Next: eval the `:v3` run and compare; then wave_001104.
 - Open questions for lead: club GPU access; which K1 ankle model (standard vs `-Parallel`).
