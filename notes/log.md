@@ -195,8 +195,39 @@
 - Hands 2.1 cm mean (8.4 cm worst moment); body 1.3 cm; joints arms 1.7° / head 1.8° / legs 3.3°
 - Trunk −1.1 cm vs ref; drift 2.4 cm; foot tilt L 1.6°, **R 23.1°** (right-foot roll, the thing `:v3` should fix)
 
+## 2026-10-15: wave_000508 on flattened clip (run me9exatd): milestone bar met
+
+**Run**
+- `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/wave_000508-tracking:v3 --env.scene.num-envs 1024`
+- WandB run: `me9exatd`, stopped at 3,625 iterations (43 min, ~35k env-steps/s). `--agent.max-iterations` wasn't passed, so max was the default 30,000
+- `:v3` checked: feet 0.0° tilt, floor gap 0.0 mm; trunk 2.1 cm lower than `:v2` (bent knees)
+
+**Training charts vs 4zzjocm6 (same iteration, smoothed)**
+- Learns faster: reward 43.8 vs 39.1 at 250 it; episode length at max by ~500
+- Plateau ~2,000 it: reward 64.7–65.0 (4zzjocm6 64.2)
+- error_body_pos 0.0105 vs 0.0170 m (−38%); error_joint_pos 0.21 vs 0.35 (−40%); anchor_pos same (~0.085)
+- mean_std 0.18, value loss ~0.005: healthy. Verdict: **done**
+
+**Eval (`uv run eval-tracking --wandb-run-path .../me9exatd`, model_3500)**
+
+| | 4zzjocm6 (v2) | me9exatd (v3) |
+|---|---|---|
+| Full clip, no falls | 50/50 | 50/50 (with pushes 50/50; 300/300 with pushes, seed 1 → ≥98.7%) |
+| Hand error mean / worst | 2.1 / 8.4 cm | **1.5 / 5.7 cm** |
+| Body error | 1.3 cm | **0.6 cm** |
+| Joint error arms / head / legs | 1.7 / 1.8 / 3.3° | 1.4 / 1.6 / **1.3°** |
+| Trunk height vs ref | −1.1 cm | **0.0 cm** |
+| Drift at clip end | 2.4 cm | 2.4 cm |
+| Max foot tilt L / R | 1.6 / **23.1°** | 2.3 / **5.0°** |
+
+**Takeaways**
+- Flattening the feet fixed the right-ankle roll (23° → 5°) and the height gap, and improved every tracking error, including the arms
+- Lesson: most of the remaining error was in the data, not the RL. Fix the reference before tuning rewards
+- wave_000508 meets milestone 1's bar (full clip, no falls, 50 rollouts). `me9exatd` is the keeper policy for gesture 1
+- ~2,000–2,500 iterations is enough for a ~4 s gesture at 1024 envs (~30 min)
+
 ## Next
-- When the `:v3` run finishes: `uv run eval-tracking --wandb-run-path .../<v3-run-id>`; compare to 4zzjocm6, esp. right-foot tilt (23°) and leg error (3.3°). Note different motion versions; also eval v3 policy on the same clip only
-- wave_000508 meets milestone 1's bar → train wave_001104 (fast wave), eval
-- Find more gestures (target 5–10)
-- Ask lead: club GPU access; which K1 ankle model (standard vs `-Parallel`)
+- `play` me9exatd and record a short video (viewer record button) for the lead
+- Train wave_001104 (fast wave, `:v2` = flattened): `--agent.max-iterations 2500`, then `eval-tracking`
+- Source gestures 3–10 from HumanML3D/BMLmovi hits (point, clap, shrug, nod): GMR → `ground_clip.py --upload` → train 2,500 → eval
+- Ask lead: one policy per gesture vs one multi-clip policy for milestone 2; club GPU access; K1 ankle model (standard vs `-Parallel`)
