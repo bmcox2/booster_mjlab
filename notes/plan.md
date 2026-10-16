@@ -1,93 +1,148 @@
-# Milestone 1 Plan: K1 Tracks One Gesture in Sim
+# Slice 0 Plan: Real Talking Motion on the K1
 
-Milestone 1 = the K1 tracks one gesture in sim without falling. Training is only the
-last step. Getting a clean gesture clip onto the K1 runs on CPU, so most of it can be
-done now.
+Step 0 of `roadmap.md`. About one week, mostly CPU. (The old milestone 1 phases A–E are
+done or superseded; their history is in `log.md`.)
 
-## High-level plan
+**Goal:** the K1 gestures along to one real BEAT2 speech clip in sim, with a video that has
+the original audio dubbed over it.
+
+**The real output is a list:** what conversational motion breaks or strains in the pipeline.
+That list sets the requirements for the general tracker (step 1). Write things down as you
+hit them, not just at the end.
+
+## Overview
 
 | Phase | Goal | Needs GPU? |
 |---|---|---|
-| A. Source data | Find 3–5 candidate gesture clips in AMASS | No |
-| B. Retarget | Convert one clip to K1 motion with GMR | No (GMR runs on CPU) |
-| C. Verify + upload | Confirm it looks right on the K1, then push it to WandB | No |
-| D. Train + evaluate | LAFAN baseline first, then train on the gesture | Yes |
-| E. Expand | Repeat B–D for 5–10 gestures | Yes |
+| 0. Admin | Tell the lead about the new milestone 1 | No |
+| A. Get BEAT2 | One speaker's clips and audio, format understood | No |
+| B. Pick a clip | One good talking clip, cut to a 20–30 s window | No |
+| C. Retarget | BEAT2 → GMR → K1 clip that reads as talking | No |
+| D. Ground + upload | `ground_clip` handles weight shifts; clip checked in the viewer | No |
+| E. Train | Single-clip tracker on the window | Yes (laptop is fine for 20–30 s) |
+| F. Evaluate | `eval-tracking` numbers + watch it | Yes (short) |
+| G. Video with audio | Sim video, original audio dubbed in, in sync | No |
+| H. EMAGE smoke test (optional) | Confirm the pretrained weights run; first look at generated motion | GPU helps |
+| I. Write up | Log + "what step 1 must handle" list | No |
 
-A–C is this week's work, and it's what blocks training anyway.
+## 0. Admin
 
-## A. Source data
+- [ ] Message the lead: milestone 1 becomes "track real conversational motion"; give the
+  reason (the waves proved the pipeline; isolated gestures don't look like what box 1 will
+  produce). Ask again about club GPU access, since step 1 depends on it.
+- [ ] Update `proposal.md` (goal, approach, metrics, timeline) once the lead agrees.
 
-- [x] **A1. Register for the datasets.** Make accounts on the AMASS and SMPL-X sites.
-  Both need a license sign-up and approval isn't always instant, so do this first.
-- [x] **A2. Download the SMPL-X body models** into GMR's `assets/body_models/smplx/`
-  (neutral, female, male).
-- [x] **A3. Download AMASS in SMPL-X format.** GMR says not to use the SMPL+H version.
-  Start with one or two subsets, not all of them.
-- [x] **A4. Find gesture clips with HumanML3D.** It has text descriptions for AMASS clips
-  plus an index with start/end frames. Grep the texts for "wave", "point", "gesture",
-  "shrug", etc., then map the hits back to AMASS files.
-- [x] **A5. Pick candidates** using these filters:
-  - Feet stay planted; the upper body does the work.
-  - 2–6 s long, or can be trimmed to that.
-  - The gesture doesn't depend on fingers or wrist rotation. GMR's K1 model has 4 DoF
-    per arm (no wrist) and the robot has no hands. A point or wave from the elbow works;
-    a thumbs-up doesn't.
+## A. Get BEAT2
 
-**Done when:** 3–5 candidates are listed in `notes/log.md`, each with file path and frame range.
+- [ ] Accept the license and download **one or two English speakers only** (SMPL-X motion
+  + matching audio), not all 60 hours.
+- [ ] Read the dataset README and open one motion file. Note:
+  - frame rate
+  - which way is up (Y-up or Z-up; AMASS is Z-up)
+  - what the file keys and body-shape size are, compared with an AMASS SMPL-X file GMR already reads
+  - how motion files pair with audio files (same name? same start time?)
+- [ ] Note typical clip lengths. They'll be much longer than the 3–4 s waves.
 
-## B. Retarget (one clip)
+**Done when:** you can say exactly how a BEAT2 motion file differs from the AMASS files GMR
+already accepts.
 
-- [x] **B1. Install GMR** in its own environment, separate from booster_mjlab's. It's
-  tested on Python 3.10: `uv venv --python 3.10`.
-- [x] **B2. Retarget one clip:**
-  ```
-  python scripts/smplx_to_robot.py --smplx_file <clip>.npz --robot booster_k1 --save_path out/<name>.pkl --rate_limit
-  ```
-  A MuJoCo window shows the result as it runs.
-- [ ] **B3. Trim** to the gesture segment if the clip has walking or idling at the start or end.
+## B. Pick a clip
 
-**Done when:** one `.pkl` looks like the gesture in GMR's viewer.
+- [ ] Listen to and watch a few clips. Pick one where the speaker:
+  - stands in place (few or no steps)
+  - gestures clearly with the arms (beats, open palms) and moves the head
+  - doesn't rely mainly on fingers or wrist twists
+- [ ] Choose a **20–30 s window** with clear speech. Use the full clip later, as a stretch goal.
+- [ ] Record the speaker, file, and frame/time range in the log, so the audio can be cut
+  to exactly the same window later.
 
-## C. Verify + upload
+**Done when:** one clip and window are picked and logged.
 
-- [ ] **C1. Watch it in booster_mjlab's viewer** with `uv run visualize-motions`. This is
-  the important check: it confirms GMR's K1 model and booster_mjlab's K1 agree on joints
-  and ankle setup. Look for flipped joints, feet sliding or going through the floor, and
-  self-collision.
-- [x] **C2. Upload it:**
-  ```
-  uv run upload-motion --input-file out/<name>.pkl --entity bmcox2-university-of-illinois-urbana-champaign
-  ```
-  Save the artifact name in the log.
-- [ ] **C3. Define metrics now, before training:** tracking error and falls over 50
-  rollouts (as in `proposal.md`). That way results are judged against a target set in advance.
+## C. Retarget with GMR
 
-**Done when:** the clip plays cleanly in booster_mjlab and the artifact name is in the log.
+- [ ] Check whether GMR reads the BEAT2 file as-is. If not, write a small converter to the
+  AMASS-style format (axis convention, body-shape size, frame-rate field). Most of the
+  risk in this phase is here.
+- [ ] Retarget and watch it in GMR's viewer. Check:
+  - Does it still look like someone talking, or just like idling? Small motions may nearly
+    disappear at K1 scale.
+  - Do head nods and turns come through? The head is the K1's extra channel.
+  - What's lost: fingers, wrist twist, spine and torso lean (the K1 has no waist).
+  - Do the hands pass through the torso during gestures near the belly?
 
-## D. Train + evaluate (when GPU time is available)
+**Done when:** the K1 clip in GMR's viewer reads as "talking with hands."
 
-- [ ] **D1. Run the LAFAN baseline first.** Train tracking on one LAFAN walking clip
-  (`whirlwind-ams/lafan_locomotion_k1`). If the gesture run fails later, this tells you
-  the problem is the clip, not the pipeline.
-- [ ] **D2. Train on the gesture clip.** Same command, with the artifact name as the registry name:
-  ```
-  uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name <artifact> --env.scene.num-envs 4096
-  ```
-- [ ] **D3. Evaluate.** Watch it with `uv run play`, then record tracking error and falls.
-- [ ] **D4. Ask about the club GPU** if the laptop is too slow or overheats.
+## D. Ground, verify, upload
 
-**Done when:** the K1 performs the gesture in `play` without falling. That completes the
-single-gesture goal.
+- [ ] Run `ground_clip` on it. **New risk:** it plants both feet and flattens stance feet,
+  but talking has weight shifts and small steps. Check whether it turns those into foot
+  sliding, knee pops, or an error.
+- [ ] Watch it in `visualize-motions`: feet on the floor, no sliding, no self-collision, no
+  flipped joints.
+- [ ] Upload and save the artifact name in the log.
 
-## E. Expand
+**Done when:** the grounded window plays cleanly in booster_mjlab.
 
-- [ ] Run B–D for the remaining gestures.
-- [ ] Decide between per-gesture policies and one multi-clip policy (the proposal says one
-  policy for the library).
-- [ ] Present results to the club.
+## E. Train
 
-## Next up
+- [ ] Train the single-clip tracker on the 20–30 s window, the same task as the waves.
+- [ ] Budget more iterations than the waves' 2,500, since there's ~8× more motion to learn.
+  Use `wandb-guide.md` / `/analyze-run` to decide when to stop, not a fixed count.
+- [ ] Watch for parts of the clip that keep failing (DeepMimic-style early termination
+  plus adaptive start sampling will keep sending training back to the hard parts).
+- [ ] Check the GPU temperature. If the window needs hours, it's a club GPU job.
 
-Tonight: submit the AMASS and SMPL-X registrations (A1), since everything else waits on
-them. Then install GMR (B1).
+**Done when:** reward and errors level off with terminations near zero.
+
+## F. Evaluate
+
+- [ ] Before trusting `eval-tracking`, check that it handles a clip longer than the training
+  episode length (it was built and tested on 3–4 s clips).
+- [ ] Run it. Compare with the waves: falls, hand error, joint error, foot tilt, and
+  especially **drift** (it was ~3 cm over 3 s; does it keep growing over 30 s?).
+- [ ] Note *when* in the clip failures and error spikes happen, and what the speaker is
+  doing at those moments.
+- [ ] Watch `play` at real speed for jitter and foot shuffling. If it's visibly jittery but
+  the numbers look fine, note that eval needs a smoothness metric (feeds step 1).
+
+**Done when:** numbers are logged next to the waves' table, with notes on where it struggles.
+
+## G. Video with audio
+
+- [ ] Record the sim with `play`'s recording option.
+- [ ] Cut the original audio to the same window and dub it onto the video.
+- [ ] Check sync at a sharp moment (a stressed word with a beat gesture). If it's off, check
+  frame rates (BEAT2 vs the K1 clip) and the start offset.
+- [ ] Optional: a side-by-side with the human reference.
+
+**Done when:** a watchable video of the K1 gesturing to real speech, in sync. Share it with
+the lead and the club.
+
+## H. EMAGE smoke test (optional, half a day max)
+
+- [ ] Install EMAGE and run its pretrained weights on the **same audio window**.
+- [ ] Push its SMPL-X output through the converter → GMR → `ground_clip`, and view it next to
+  the mocap version in `visualize-motions`. No training.
+- [ ] Note how it differs from mocap: jitter, foot sliding, amplitude, odd poses.
+
+**Done when:** you know the weights run (or what blocks them) and have a first look at what
+generated motion will ask of the tracker.
+
+## I. Write up
+
+- [ ] `/log-session` with the run, eval table, and video link.
+- [ ] Add a **"What step 1 must handle"** section to the log, grouped as:
+  - data format / conversion
+  - clip length and training cost
+  - feet: weight shifts, steps, sliding
+  - drift over long clips
+  - smoothness / jitter
+  - lost DoF (wrists, fingers, waist) and whether the motion still reads as talking
+  - (from H) generated vs mocap differences
+- [ ] Update `CLAUDE.md` status.
+
+## Slice 0 is done when
+
+1. The K1 tracks a 20–30 s BEAT2 window with no falls in `eval-tracking`.
+2. There's a synced video with the original audio.
+3. The "what step 1 must handle" list is written.
