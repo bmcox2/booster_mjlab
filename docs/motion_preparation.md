@@ -13,6 +13,23 @@ export WANDB_ENTITY=your-organization-name
 
 ## GMR motions
 
+### Ground the clips first
+
+GMR's K1 model differs slightly from the one used for training (the legs sit 1.5 cm lower here), so
+retargeted K1 clips come out with the feet ~6–7 cm below the floor. Fix every clip in a folder with:
+
+```bash
+uv run python tools/ground_clip.py ~/robotics/data/k1_motions            # writes <name>_grounded.pkl
+uv run python tools/ground_clip.py ~/robotics/data/k1_motions --upload   # ...and uploads each one
+```
+
+The script runs forward kinematics on `k1.xml` and measures each clip's own offset, so the lowest collision
+point touches the floor. Re-running it only processes new or changed clips (`--force` redoes all). With
+`--upload`, the artifact is named after the original clip (`<name>-tracking`), so re-uploading a fixed clip
+adds a new version instead of a new artifact. Upload the `_grounded.pkl` files, never the raw ones.
+
+### Upload
+
 `upload-motion` converts a `.pkl` clip to the tracking format and uploads it to WandB in one step:
 
 ```bash

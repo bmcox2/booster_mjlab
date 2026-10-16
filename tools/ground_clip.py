@@ -1,21 +1,30 @@
-"""Shift a GMR robot-motion .pkl so the robot's lowest collision point sits exactly on the floor.
+"""Shift GMR robot-motion .pkl clips so the robot's lowest collision point sits exactly on the floor.
 
 Forward kinematics is run on booster-mjlab's own K1 model (the one training uses),
-so the offset is measured, not guessed.
+so the offset is measured per clip, not guessed.
+
+Each <name>.pkl is written to <name>_grounded.pkl next to it. Clips that are already
+grounded (or whose _grounded.pkl is newer than the source) are skipped.
 
 Usage (from ~/projects/booster-mjlab):
-    uv run python tools/ground_clip.py <GMR K1 xml> <booster-mjlab K1 xml> <in.pkl> <out.pkl>
+    uv run python tools/ground_clip.py ~/robotics/data/k1_motions            # every clip in a folder
+    uv run python tools/ground_clip.py clip_a.pkl clip_b.pkl                 # specific clips
+    uv run python tools/ground_clip.py ~/robotics/data/k1_motions --upload   # also upload-motion each one
 """
+import argparse
+import os
 import pickle
+import subprocess
 import sys
+from pathlib import Path
 
 import mujoco
 import numpy as np
 
-gmr_xml, robot_xml, src, dst = sys.argv[1:5]
-
-with open(src, "rb") as f:
-    motion = pickle.load(f)
+REPO = Path(__file__).resolve().parents[1]
+DEFAULT_GMR_XML = Path.home() / "projects/GMR/assets/booster_k1/K1_serial.xml"
+DEFAULT_ROBOT_XML = REPO / "src/booster_mjlab/robots/booster_k1/xmls/k1.xml"
+SUFFIX = "_grounded"
 
 # GMR's K1 model names a few joints differently from booster-mjlab's.
 RENAME = {
@@ -33,61 +42,136 @@ def hinge_names(model):
     return [mujoco.mj_id2name(model, JOINT, j) for j in range(model.njnt) if model.jnt_type[j] != FREE]
 
 
-# GMR's dof_pos columns follow the joint order of GMR's own K1 model.
-gmr = mujoco.MjModel.from_xml_path(gmr_xml)
-gmr_joints = hinge_names(gmr)
-n_dof = motion["dof_pos"].shape[1]
-if len(gmr_joints) != n_dof:
-    sys.exit(f"GMR model has {len(gmr_joints)} joints but clip has {n_dof} dof columns")
+class Grounder:
+    def __init__(self, gmr_xml, robot_xml):
+        # GMR's dof_pos columns follow the joint order of GMR's own K1 model.
+        self.gmr_joints = hinge_names(mujoco.MjModel.from_xml_path(str(gmr_xml)))
 
-# Map each GMR joint, by name, onto booster-mjlab's model.
-rob = mujoco.MjModel.from_xml_path(robot_xml)
-data = mujoco.MjData(rob)
-free_ids = [j for j in range(rob.njnt) if rob.jnt_type[j] == FREE]
-if not free_ids:
-    sys.exit("robot xml has no free joint (floating base)")
-root_adr = rob.jnt_qposadr[free_ids[0]]
+        # Map each GMR joint, by name, onto booster-mjlab's model.
+        rob = mujoco.MjModel.from_xml_path(str(robot_xml))
+        free_ids = [j for j in range(rob.njnt) if rob.jnt_type[j] == FREE]
+        if not free_ids:
+            sys.exit("robot xml has no free joint (floating base)")
+        self.root_adr = rob.jnt_qposadr[free_ids[0]]
 
-missing, dof_adr = [], []
-for name in gmr_joints:
-    jid = mujoco.mj_name2id(rob, JOINT, RENAME.get(name, name))
-    if jid < 0:
-        missing.append(name)
-    else:
-        dof_adr.append(rob.jnt_qposadr[jid])
-if missing:
-    print("Robot xml joints:", hinge_names(rob))
-    sys.exit(f"These GMR joints are not in the robot xml: {missing}")
+        missing, self.dof_adr = [], []
+        for name in self.gmr_joints:
+            jid = mujoco.mj_name2id(rob, JOINT, RENAME.get(name, name))
+            if jid < 0:
+                missing.append(name)
+            else:
+                self.dof_adr.append(rob.jnt_qposadr[jid])
+        if missing:
+            print("Robot xml joints:", hinge_names(rob))
+            sys.exit(f"These GMR joints are not in the robot xml: {missing}")
 
-# Collision geoms only (skip visual-only geoms and anything attached to the world, e.g. the floor).
-geoms = [
-    g for g in range(rob.ngeom)
-    if rob.geom_bodyid[g] != 0 and (rob.geom_contype[g] or rob.geom_conaffinity[g])
-]
+        # Collision geoms only (skip visual-only geoms and anything attached to the world, e.g. the floor).
+        self.geoms = [
+            g for g in range(rob.ngeom)
+            if rob.geom_bodyid[g] != 0 and (rob.geom_contype[g] or rob.geom_conaffinity[g])
+        ]
+        self.rob, self.data = rob, mujoco.MjData(rob)
 
-lowest = []
-for root_pos, root_xyzw, dof in zip(motion["root_pos"], motion["root_rot"], motion["dof_pos"]):
-    data.qpos[:] = rob.qpos0
-    data.qpos[root_adr:root_adr + 3] = root_pos
-    data.qpos[root_adr + 3:root_adr + 7] = np.asarray(root_xyzw)[[3, 0, 1, 2]]  # GMR saves xyzw; MuJoCo wants wxyz
-    data.qpos[dof_adr] = dof
-    mujoco.mj_kinematics(rob, data)
+    def lowest_per_frame(self, motion):
+        n_dof = motion["dof_pos"].shape[1]
+        if len(self.gmr_joints) != n_dof:
+            raise ValueError(f"GMR model has {len(self.gmr_joints)} joints but clip has {n_dof} dof columns")
 
-    frame_min = np.inf
-    for g in geoms:
-        z_row = data.geom_xmat[g].reshape(3, 3)[2]          # world-z row of the geom's rotation
-        center, half = rob.geom_aabb[g][:3], rob.geom_aabb[g][3:]
-        z = data.geom_xpos[g][2] + z_row @ center - np.abs(z_row) @ half
-        frame_min = min(frame_min, z)
-    lowest.append(frame_min)
+        rob, data = self.rob, self.data
+        lowest = []
+        for root_pos, root_xyzw, dof in zip(motion["root_pos"], motion["root_rot"], motion["dof_pos"]):
+            data.qpos[:] = rob.qpos0
+            data.qpos[self.root_adr:self.root_adr + 3] = root_pos
+            data.qpos[self.root_adr + 3:self.root_adr + 7] = np.asarray(root_xyzw)[[3, 0, 1, 2]]  # GMR saves xyzw; MuJoCo wants wxyz
+            data.qpos[self.dof_adr] = dof
+            mujoco.mj_kinematics(rob, data)
 
-lowest = np.array(lowest)
-dz = -lowest.min()
-print(f"lowest point per frame (m): min {lowest.min():+.4f}  median {np.median(lowest):+.4f}  max {lowest.max():+.4f}")
-print(f"shifting root z by {dz:+.4f} m so the lowest point touches the floor")
+            frame_min = np.inf
+            for g in self.geoms:
+                z_row = data.geom_xmat[g].reshape(3, 3)[2]          # world-z row of the geom's rotation
+                center, half = rob.geom_aabb[g][:3], rob.geom_aabb[g][3:]
+                z = data.geom_xpos[g][2] + z_row @ center - np.abs(z_row) @ half
+                frame_min = min(frame_min, z)
+            lowest.append(frame_min)
+        return np.array(lowest)
 
-motion["root_pos"] = np.array(motion["root_pos"], dtype=float)
-motion["root_pos"][:, 2] += dz
-with open(dst, "wb") as f:
-    pickle.dump(motion, f)
-print(f"saved -> {dst}")
+    def ground(self, src, dst):
+        with open(src, "rb") as f:
+            motion = pickle.load(f)
+        lowest = self.lowest_per_frame(motion)
+        dz = -lowest.min()
+        print(f"  lowest point per frame (m): min {lowest.min():+.4f}  median {np.median(lowest):+.4f}  max {lowest.max():+.4f}")
+        print(f"  shifting root z by {dz:+.4f} m")
+
+        motion["root_pos"] = np.array(motion["root_pos"], dtype=float)
+        motion["root_pos"][:, 2] += dz
+        with open(dst, "wb") as f:
+            pickle.dump(motion, f)
+        print(f"  saved -> {dst}")
+
+
+def collect(paths):
+    """Expand folders into their .pkl clips, skipping outputs of this script."""
+    clips = []
+    for p in map(Path, paths):
+        if p.is_dir():
+            clips += sorted(c for c in p.glob("*.pkl") if not c.stem.endswith(SUFFIX))
+        elif p.stem.endswith(SUFFIX):
+            print(f"skip {p.name}: already a grounded clip")
+        else:
+            clips.append(p)
+    return clips
+
+
+def upload(clip, entity):
+    # Name the artifact after the original clip, so re-uploading a fixed clip bumps
+    # e.g. wave_000508-tracking:v0 -> :v1 instead of creating wave_000508_grounded-tracking.
+    name = clip.stem.removesuffix(SUFFIX) + "-tracking"
+    cmd = ["upload-motion", "--input-file", str(clip), "--artifact-name", name]
+    if entity:
+        cmd += ["--entity", entity]
+    print("  $", " ".join(cmd))
+    subprocess.run(cmd, check=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("paths", nargs="+", help=".pkl clips and/or folders of them")
+    ap.add_argument("--gmr-xml", type=Path, default=DEFAULT_GMR_XML, help="K1 model GMR retargeted with")
+    ap.add_argument("--robot-xml", type=Path, default=DEFAULT_ROBOT_XML, help="K1 model training uses")
+    ap.add_argument("--force", action="store_true", help="re-ground even if an up-to-date _grounded.pkl exists")
+    ap.add_argument("--upload", action="store_true", help="run upload-motion on each newly grounded clip")
+    ap.add_argument("--entity", default=os.environ.get("WANDB_ENTITY"), help="WandB entity (default: $WANDB_ENTITY)")
+    args = ap.parse_args()
+
+    clips = collect(args.paths)
+    if not clips:
+        sys.exit("no clips found")
+    grounder = Grounder(args.gmr_xml, args.robot_xml)
+
+    done, skipped, failed = [], [], []
+    for src in clips:
+        dst = src.with_name(src.stem + SUFFIX + ".pkl")
+        if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime and not args.force:
+            skipped.append(src.name)
+            continue
+        print(f"{src.name}")
+        try:
+            grounder.ground(src, dst)
+            if args.upload:
+                upload(dst, args.entity)
+            done.append(src.name)
+        except Exception as e:  # keep going so one bad clip doesn't stop the batch
+            print(f"  FAILED: {e}")
+            failed.append(src.name)
+
+    print(f"\ngrounded {len(done)}, skipped {len(skipped)} (already up to date), failed {len(failed)}")
+    if skipped:
+        print("  skipped:", ", ".join(skipped), "(use --force to redo)")
+    if failed:
+        print("  failed:", ", ".join(failed))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
