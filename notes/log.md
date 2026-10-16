@@ -254,7 +254,69 @@
 - The pipeline (GMR → ground_clip with foot flattening → 2,500 it → eval) worked first try on a new clip
 - **2 of 5–10 gestures done** for milestone 1
 
+## 2026-10-16: roadmap revised, BEAT2 converter, first club-GPU run (e2p0f89y)
+
+**Roadmap**
+- New `notes/roadmap.md`; `notes/plan.md` is now the Slice 0 checklist (old phases A–E are done or superseded)
+- Milestone 1 is now "K1 tracks real conversational motion": BEAT2 talking data replaces more isolated AMASS gestures; the two waves are kept for the later semantic layer
+
+**BEAT2 → GMR converter: `tools/beat2_to_gmr.py`**
+- Data: 5 Scott takes (5.6 min) in `~/robotics/data/BEAT2/beat_english_v2.0.0/` (`smplxflame_30/`, `wave16k/`)
+- BEAT2 format: keys `betas(300)`, `poses(N,165)`, `expressions(N,100)`, `trans`, `model`, `gender`, `mocap_frame_rate`; 30 fps; **Y-up** (AMASS/GMR are Z-up); audio is 16 kHz **32-bit float**
+- Fixes to the first draft:
+  - betas 10 → **16**: GMR's SMPL-X uses 16; with 10 it crashes in `lbs` (`einsum` size 26 vs 20)
+  - Y-up → Z-up: SMPL-X rotates about the pelvis, so `trans` must be rotated as `fix(trans + j0) - j0`; rotating `trans` alone put the body ~36 cm below the floor (j0 read from `SMPLX_<GENDER>.npz`)
+  - audio: stdlib `wave` can't read float WAVs (`unknown format: 3`) → `scipy.io.wavfile`
+- Checked: round trip through GMR's loader matches the source joints exactly; full test clip retargets to a 22-DoF K1 `.pkl`
+- Converted `2_scott_0_1_1` 10–30 s, but that window has walking: each ankle travels ~1 m, pelvis drops 18 cm at ~4 s → not usable for Slice 0
+- Open check: in `2_scott_0_1_1` the audio is 64.1 s and the motion 63.5 s; the converter assumes both start together. Verify sync on the video
+
+**`--find-still`** (same script): drops windows where either ankle strays > 10 cm from its median, ranks the rest by wrist speed relative to the pelvis (so standing silently with arms down ranks last)
+- `~/projects/GMR/.venv/bin/python tools/beat2_to_gmr.py --find-still --window 20 ~/robotics/data/BEAT2/beat_english_v2.0.0/smplxflame_30/2_scott_*.npz`
+
+| Window | Windows with feet < 10 cm | Best |
+|---|---|---|
+| 20 s | 0 (stillest 13 cm) | none |
+| 15 s | 0 (stillest 13 cm) | none |
+| 10 s | 4 | `2_scott_0_1_1` 34–44 s: arms 61 cm/s (median window 37), feet 3.7 cm |
+
+- **Finding: Scott shifts his feet every 5–10 s** (take 5: 24 foot moves in 80 s, 6–42 cm each, 0.2–0.7 s long). Stepping is normal talking behaviour, not an edge case → the general tracker and `ground_clip` (which plants both feet) must handle it
+
+**Run: first training on the club GPU**
+- Host `sigrobotics`, RTX 5070 Ti. WandB run `e2p0f89y`
+- Settings from the WandB config: `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/wave_000508-tracking:v3 --env.scene.num-envs 4096 --agent.max-iterations 2500`
+- 2,500 iterations in 25 min, **~169k env-steps/s (4.8× the laptop's ~35k)**
+
+**Training charts vs me9exatd (same clip, laptop, 1024 envs; raw values)**
+
+| Iteration | e2p0f89y reward / body err / joint err | me9exatd |
+|---|---|---|
+| 250 | 62.2 / 0.0163 / 0.47 | 51.1 / 0.0220 / 0.63 |
+| 1,000 | 65.5 / 0.0095 / 0.23 | 64.1 / 0.0098 / 0.23 |
+| 2,500 | 66.1 / 0.0085 / 0.19 | 65.1 / 0.0084 / 0.20 |
+
+- mean_std 0.147, value loss 0.002, episode length at max from the start: healthy
+
+**Eval** (`eval-tracking` on `e2p0f89y` model_2499, no pushes)
+
+| | me9exatd (model_3500) | e2p0f89y (model_2499) |
+|---|---|---|
+| Full clip, no falls | 50/50 | **50/50** (≥92.9%) |
+| Hand error mean / worst | 1.5 / 5.7 cm | 1.4 / 5.1 cm |
+| Body error | 0.6 cm | 0.5 cm |
+| Joint error arms / head / legs | 1.4 / 1.6 / 1.3° | 1.4 / 1.4 / 1.3° |
+| Trunk height vs ref | 0.0 cm | +0.1 cm |
+| Drift at clip end | 2.4 cm | 2.3 cm |
+| Max foot tilt L / R | 2.3 / 5.0° | 2.4 / 3.3° |
+
+**Takeaways**
+- The club GPU works and reproduces the laptop result, slightly better, in 25 min instead of 43, with 4× the envs
+- 4096 envs learns faster per iteration (reward 62 vs 51 at 250 it) and ends at the same quality → long BEAT2 clips can go to the club GPU
+
 ## Next
-- Source gestures 3–10 from HumanML3D/BMLmovi hits (point, clap, shrug, nod; something two-handed or with a bigger reach to test balance): GMR → `ground_clip.py --upload` → train 2,500 it → eval
+- Slice 0 (`notes/plan.md`): convert `2_scott_0_1_1 --start 34 --end 44` (+ `--wav`) → GMR → `ground_clip --upload` → train on the club GPU → eval → video with audio
+- Second run: a 20 s window with steps (e.g. `--max-foot-move 0.15`) to see what `ground_clip` and the tracker do with stepping
+- Optionally download more BEAT2 speakers and rerun `--find-still`; some may stand stiller than Scott
+- Tell the lead about the milestone 1 change; update `proposal.md` once agreed
 - `play` + record videos of me9exatd and pqh0whw0 for the lead
-- Ask lead: one policy per gesture vs one multi-clip policy for milestone 2; club GPU access; K1 ankle model (standard vs `-Parallel`)
+- Still open with lead: K1 ankle model (standard vs `-Parallel`)

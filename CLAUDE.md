@@ -8,12 +8,15 @@ Context for AI assistants working in this repo. Keep this file current; it is re
 - Project: **co-speech gesture tracking on the Booster K1**. Long-term vision: a K1 that talks and gestures naturally (tutor / presenter).
 - Anchor paper: "Semantic Co-Speech Gesture Synthesis and Real-Time Control for Humanoid Robots" (arXiv 2512.17183, Unitree G1). Background: DeepMimic (arXiv 1804.02717).
 
-## Milestone plan
-1. **Milestone 1 (current):** K1 tracks 5–10 retargeted gestures in mjlab sim, full clip, no falls (50 rollouts/gesture), using mjlab's default action space and rewards. Sim only.
-2. Milestone 2: default vs residual (reference + bounded correction) actions; LLM picks gestures from the SeG library.
-3. Milestone 3+: speech in the loop (BEAT2 data), gestures while walking (ExBody2), gaze/presenting, sim-to-real.
+## Roadmap (revised 2026-10-16; full version in `notes/roadmap.md`)
+Pipeline: audio → [1] gesture generator (borrow pretrained EMAGE) → SMPL-X → [2] GMR + ground_clip → [3] RL tracker (the focus). Milestone 1 is now "K1 tracks real conversational motion" (was: 5–10 AMASS gestures).
+0. **Slice 0 (current):** one BEAT2 talking clip → GMR → ground_clip → single-clip tracker → sim video with the original audio. Plan: `notes/plan.md`.
+1. General tracker: MultiMotionCommand, trained on BEAT2 + AMASS gestures, evaluated on held-out speakers. Club GPU.
+2. Product v1: any audio → EMAGE → GMR → tracker, offline.
+3. Real-time streaming + latency, then an LLM picking SeG gestures (AMASS waves/points are kept for this).
+4. Sim-to-real in parallel: ankle model, domain randomization, policy export.
 
-Data plan: AMASS clips found via HumanML3D text labels (SMPL-X) → GMR retargeting (`booster_k1` config, SMPL-X input only) → `upload-motion` → tracking. Missing gestures: phone video → GVHMR → GMR.
+Data: BEAT2 (SMPL-X + audio) is the tracker's main training data. AMASS via HumanML3D labels for isolated gestures. Missing gestures: phone video → GVHMR → GMR.
 
 K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3, elbow), legs 6 each. **No wrists, no waist, no hands.**
 
@@ -21,7 +24,7 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
-- Also in `notes/`: `eval-guide.md` (how to run/read `eval-tracking`), `plan.md` (Milestone 1 phases A–E with checklists), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `plan.md` (current step's checklist: Slice 0), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
 - Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 
@@ -49,6 +52,7 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - WandB entity must be the **team**: `WANDB_ENTITY=bmcox2-university-of-illinois-urbana-champaign` (not `bmcox2`, not the `-org` name). Set in `~/.bashrc`.
 - Hardware: Dell XPS 15, RTX 4070 Laptop 8 GB, Ubuntu 24.04 (dual boot). GPU power capped ~35 W; dGPU has dropped out intermittently and the laptop has overheated before. Check `nvidia-smi` before runs; stop if GPU sustains >~87 °C. Prefer the club GPU for long runs.
 - 4096 envs fits in 8 GB (~3k iterations ≈ 2.5 h for the velocity task).
+- SSH: `ssh booster@10.193.169.55` (private campus IP, so it only works on the campus network or VPN).
 
 ## Status
 - 2026-10-13: setup done; velocity baseline trained (WandB run `2wagxxko`, healthy).
@@ -59,5 +63,7 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-15: `uv run eval-tracking` built (guide: `notes/eval-guide.md`). 4zzjocm6 on wave_000508 v2: 50/50 PASS, hands 2.1 cm, right foot rolls 23°.
 - 2026-10-15: run `me9exatd` (wave_000508 `:v3`, flattened feet): 50/50 (300/300 with pushes), hands 1.5 cm, foot tilt 5°. **Gesture 1 meets milestone 1 bar.**
 - 2026-10-16: gesture 2 `wave_001104` (run `pqh0whw0`, `:v2`): 50/50, 300/300 with pushes, hands 1.7 cm. **2 of 5–10 gestures done.**
-- Next: source gestures 3–10 (point, clap, shrug, nod) → ground_clip --upload → 2,500 it → eval.
-- Open questions for lead: club GPU access; which K1 ankle model (standard vs `-Parallel`).
+- 2026-10-16: roadmap revised (`notes/roadmap.md`): BEAT2 talking data replaces more AMASS gestures. Next: Slice 0 (`notes/plan.md`).
+- 2026-10-16: `tools/beat2_to_gmr.py` converts BEAT2 (Y-up, float WAV) to GMR input; `--find-still` ranks still, gesturing windows. BEAT2 Scott data in `~/robotics/data/BEAT2/beat_english_v2.0.0/`. Scott steps every 5–10 s, so no 20 s still window; best 10 s: `2_scott_0_1_1` 34–44 s.
+- 2026-10-16: club GPU works: host `sigrobotics` (RTX 5070 Ti), ~169k env-steps/s at 4096 envs (4.8× laptop). Run `e2p0f89y` (wave_000508 `:v3`, 2,500 it, 25 min): 50/50, hands 1.4 cm.
+- Open questions for lead: which K1 ankle model (standard vs `-Parallel`).
