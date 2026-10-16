@@ -226,8 +226,35 @@
 - wave_000508 meets milestone 1's bar (full clip, no falls, 50 rollouts). `me9exatd` is the keeper policy for gesture 1
 - ~2,000–2,500 iterations is enough for a ~4 s gesture at 1024 envs (~30 min)
 
+## 2026-10-16: gesture 2, fast wave wave_001104 (run pqh0whw0): passes
+
+**Run**
+- `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/wave_001104-tracking:v2 --env.scene.num-envs 1024 --agent.max-iterations 2500`
+- WandB run: `pqh0whw0`, 2,500 iterations in 29 min (~36.6k env-steps/s). Clip: 2.9 s, flattened feet (`:v2`)
+
+**Training charts**
+- reward 46.0 (250 it) → 62.7 (1k) → 64.0 (2.5k), still creeping up by ~0.1–0.3 per 500 it; episode length at max by ~500
+- error_body_pos 0.0108 m, error_joint_pos 0.239 (≈ me9exatd: 0.0105 / 0.21); terminations ~0
+- mean_std 0.19, value loss 0.005: healthy. Verdict: **done** (2,500 was enough)
+
+**Eval**
+
+| | wave_000508 (me9exatd) | wave_001104 (pqh0whw0) |
+|---|---|---|
+| Full clip, no falls | 50/50; 300/300 with pushes | **50/50; 300/300 with pushes** (≥98.7%) |
+| Hand error mean / worst | 1.5 / 5.7 cm | 1.7 / 5.8 cm |
+| Body error | 0.6 cm | 0.6 cm |
+| Joint error arms / head / legs | 1.4 / 1.6 / 1.3° | 1.8 / 1.9 / 1.2° |
+| Trunk height vs ref | 0.0 cm | −0.1 cm |
+| Drift at clip end | 2.4 cm | 3.1 cm |
+| Max foot tilt L / R | 2.3 / 5.0° | 3.0 / 3.3° (push: 5.8 / 4.9°) |
+
+**Takeaways**
+- Faster arms cost very little: hands +0.2 cm, arm joints +0.4°; balance unaffected
+- The pipeline (GMR → ground_clip with foot flattening → 2,500 it → eval) worked first try on a new clip
+- **2 of 5–10 gestures done** for milestone 1
+
 ## Next
-- `play` me9exatd and record a short video (viewer record button) for the lead
-- Train wave_001104 (fast wave, `:v2` = flattened): `--agent.max-iterations 2500`, then `eval-tracking`
-- Source gestures 3–10 from HumanML3D/BMLmovi hits (point, clap, shrug, nod): GMR → `ground_clip.py --upload` → train 2,500 → eval
+- Source gestures 3–10 from HumanML3D/BMLmovi hits (point, clap, shrug, nod; something two-handed or with a bigger reach to test balance): GMR → `ground_clip.py --upload` → train 2,500 it → eval
+- `play` + record videos of me9exatd and pqh0whw0 for the lead
 - Ask lead: one policy per gesture vs one multi-clip policy for milestone 2; club GPU access; K1 ankle model (standard vs `-Parallel`)

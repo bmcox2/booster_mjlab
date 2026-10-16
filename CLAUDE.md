@@ -58,5 +58,6 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-15: `ground_clip.py` now flattens stance feet (GMR clips stood on 6–12° tilted feet; policy rolled the right ankle). Default on; `--keep-foot-tilt` to skip.
 - 2026-10-15: `uv run eval-tracking` built (guide: `notes/eval-guide.md`). 4zzjocm6 on wave_000508 v2: 50/50 PASS, hands 2.1 cm, right foot rolls 23°.
 - 2026-10-15: run `me9exatd` (wave_000508 `:v3`, flattened feet): 50/50 (300/300 with pushes), hands 1.5 cm, foot tilt 5°. **Gesture 1 meets milestone 1 bar.**
-- Next: train wave_001104 (`:v2`, 2,500 it) + eval; then source gestures 3–10.
+- 2026-10-16: gesture 2 `wave_001104` (run `pqh0whw0`, `:v2`): 50/50, 300/300 with pushes, hands 1.7 cm. **2 of 5–10 gestures done.**
+- Next: source gestures 3–10 (point, clap, shrug, nod) → ground_clip --upload → 2,500 it → eval.
 - Open questions for lead: club GPU access; which K1 ankle model (standard vs `-Parallel`).
