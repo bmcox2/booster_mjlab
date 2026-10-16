@@ -24,7 +24,11 @@ uv run python tools/ground_clip.py ~/robotics/data/k1_motions --upload   # ...an
 ```
 
 The script runs forward kinematics on `k1.xml` and measures each clip's own offset, so the lowest collision
-point touches the floor. Re-running it only processes new or changed clips (`--force` redoes all). With
+point touches the floor. It also flattens feet that are on the floor: GMR copies the human's foot angle, which
+leaves K1 standing on tilted foot edges (6–12°), and a policy trained on that learns to roll its ankle. Ankle
+pitch/roll are re-solved so the soles are level, then the trunk is lowered by one constant amount (~1 cm) and
+leg IK bends the knees so both flat feet rest on the floor. Arms, head and trunk rotation are untouched. Pass
+`--keep-foot-tilt` to skip this. Re-running it only processes new or changed clips (`--force` redoes all). With
 `--upload`, the artifact is named after the original clip (`<name>-tracking`), so re-uploading a fixed clip
 adds a new version instead of a new artifact. Upload the `_grounded.pkl` files, never the raw ones.
 

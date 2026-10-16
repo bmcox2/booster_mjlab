@@ -133,8 +133,57 @@
 - Always ground GMR clips before uploading; never train on raw `.pkl` uploads
 - Pin artifact versions explicitly (`:v1`) in `--registry-name` so runs record which clip they used
 
+## 2026-10-15: wave_000508 tracking on grounded clip (run 4zzjocm6)
+
+**Run**
+- `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/wave_000508-tracking:v2 --env.scene.num-envs 1024`
+- WandB run: `4zzjocm6` (2026-10-15_20-15-14), finished all 5,000 iterations in 61 min (~0.73 s/it, ~35k env-steps/s)
+- Motion versions: `:v1` = first ground_clip (bounding boxes, hovered 2–6 mm), `:v2` = exact ground_clip (floor gap 0.0 min / 2.8 median / 4.3 max mm). This run used `:v2`
+
+**Results (final; vs w77drafm on sunk v0)**
+- mean_reward 64.7 (vs 58.8); flat since ~2k iterations (63.7 → 64.7 over the last 3k)
+- mean_episode_length 500 (max) from ~900 iterations; anchor_pos / anchor_ori / ee_body_pos terminations ~0
+- error_body_pos 0.016 m (vs 0.052, ~3× better); error_anchor_pos 0.080 m (vs 0.105); error_joint_pos 0.35 rad (vs 0.42)
+- mean_std 0.78 → 0.17, smooth; value loss ~0.003
+- Verdict: **done**. Learned, stable, no falls; more iterations won't help much
+
+**Height check ("robot looks too high")**
+- Headless rollout of `model_4999.pt`, 64 envs × 550 steps, play config: 0 resets
+- Simulated trunk is **1.1 cm lower** than the reference (p10–p90: −1.2 to −1.0 cm); trunk xy drift 2.4 cm mean
+- Not a grounding bug: v2 reference touches the floor exactly; simulated feet sink only ~1 mm into the floor (normal soft contact)
+- Cause: the reference feet are **tilted 6–9° the whole clip** (GMR retargeting artifact), so the clip stands on foot edges. The policy plants the left foot flat (0.2°) and sits ~1 cm lower. It also rolls the right foot more than the reference (16.5° vs 9.1°; Right_Ankle_Roll −0.12 rad)
+- Largest joint errors: Left_Knee_Pitch +0.17, Right_Ankle_Roll −0.12, Left_Hip_Pitch −0.11 rad (legs, not arms)
+
+**Takeaways**
+- Grounding fixed the big error (6.5 cm sink → body error 3× lower). The remaining 1 cm gap comes from tilted feet in the retargeted clip
+- Arms (the gesture) track well; remaining error is in leg/foot posture
+
+## 2026-10-15: foot flattening in ground_clip.py
+
+**Problem**
+- `play` on 4zzjocm6 confirmed the right foot (under the waving arm) rolls onto its outer edge: 16.5° mean, 25° max
+- Cause is the data: GMR copies the human foot angle, so every wave clip stands on tilted feet (6–12°)
+
+**Fix: `tools/ground_clip.py` now flattens stance feet (default; `--keep-foot-tilt` to skip)**
+1. Re-solve ankle pitch/roll per frame so each sole is level (feet near the floor only; blended for feet in the air)
+2. Ground the clip (exact lowest point, as before)
+3. Flat feet can hover (wave_000508 right foot: 9.5 mm) on a nearly straight leg that can't reach further. So: lower the trunk by one constant amount for the clip (+3 mm margin), then leg IK bends each knee so both feet sit on the floor
+- Bugs hit on the way: lowering the hovering foot directly diverged (straight leg can't extend); IK found a backwards knee (−0.31 rad) → start knee bent + clamp to limits; per-frame trunk drop caused knee jitter (1.6° ↔ 12° on 000113) because near a straight knee a tiny height change needs a big angle change → constant drop + margin
+
+**Result (all three wave clips)**
+
+| Clip | Foot tilt before → after | Trunk lowered | Knees after |
+|---|---|---|---|
+| wave_000508 | L 6.2°/R 9.1° → 0.0° | 13.5 mm | L ~28°, R ~16° |
+| wave_000113 | L 9.1°/R 5.0° → 0.0° | 7.2 mm | ~15–21° |
+| wave_001104 | L 7.8°/R 9.0° → 0.0° | 11.4 mm | ~16–27° |
+
+- Verified with MuJoCo (`mj_geomDistance` to a floor plane): both feet 0.00 mm gap every frame, no other part below the floor; upper-body joints and trunk rotation unchanged; foot xy unchanged; all joints in limits; joint jitter ≤ original GMR clips
+- Trade-off: the reference now stands with bent knees, ~1 cm lower. The 4zzjocm6 policy bent its knees on its own anyway
+
 ## Next
-- Ground clips → `visualize-motions` check → upload grounded clips (`wave_000508-tracking:v1`)
-- Retrain `Mjlab-Tracking-Flat-Booster-K1` on `wave_000508-tracking:v1`; compare anchor/body errors to `w77drafm`
-- `play` the result; then 50-rollout fall/tracking-error eval
+- Re-ground real clips with flattening, check in `visualize-motions`, upload (wave_000508 → `:v3`)
+- Retrain on `:v3`; compare to 4zzjocm6 (right-foot roll, leg joint errors, height gap); check feet in `play`
+- 50-rollout eval on the better run (milestone 1 metric)
+- Phase E: train wave_001104, then find more gestures
 - Ask lead: club GPU access; which K1 ankle model (standard vs `-Parallel`)

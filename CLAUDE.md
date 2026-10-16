@@ -53,5 +53,7 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-13: setup done; velocity baseline trained (WandB run `2wagxxko`, healthy).
 - 2026-10-14: gesture pipeline A–C mostly done. GMR at `~/projects/GMR` (own uv venv, SMPL-X models in `assets/body_models/smplx/`); data in `~/robotics/data/` (HumanML3D, amass/BMLmovi, k1_motions). First gesture: BMLmovi wave `wave_000508` (HumanML3D 000508), uploaded as `bmcox2-university-of-illinois-urbana-champaign/motion_upload/wave_000508-tracking:v0`.
 - 2026-10-15: first tracking run `w77drafm` (wave_000508 v0, 1024 envs, ~0.84 s/it) learned without falls, but v0 clips were 6–7 cm below the floor. Fix: `tools/ground_clip.py` (run on every GMR clip before upload).
-- Next: upload grounded clips (`wave_000508-tracking:v1`), retrain on v1, compare to `w77drafm`, then `play` + 50-rollout eval.
+- 2026-10-15: run `4zzjocm6` on grounded `wave_000508-tracking:v2`: done, no falls, body error 0.016 m. Robot sits 1.1 cm below the reference because the GMR clip's feet are tilted 6–9°.
+- 2026-10-15: `ground_clip.py` now flattens stance feet (GMR clips stood on 6–12° tilted feet; policy rolled the right ankle). Default on; `--keep-foot-tilt` to skip.
+- Next: re-ground + upload wave_000508 `:v3`, retrain, compare to 4zzjocm6, then 50-rollout eval.
 - Open questions for lead: club GPU access; which K1 ankle model (standard vs `-Parallel`).
