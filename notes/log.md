@@ -114,13 +114,15 @@
 - In `play`: ___
 
 **Problem: retargeted clips sit below the floor**
-- GMR K1 clips put the robot's lowest collision point 6.4–7.3 cm below the floor (wave_000508 −6.71, wave_000113 −6.39, wave_001104 −7.29 cm)
+- GMR K1 clips put the robot's lowest collision point 6.0–6.5 cm below the floor (wave_000508 −6.52, wave_000113 −6.05, wave_001104 −6.42 cm; lowest part is always the foot mesh)
 - Cause, in part: GMR retargets with its own `K1_serial.xml`; in booster-mjlab's `k1.xml` the legs attach 1.5 cm lower (checked by running FK on both models with the same pose: head/arms/trunk match exactly, every leg body is 1.5 cm lower)
 - A fixed guess (`shift_height.py`, +2 cm) was far too small, so it was deleted
 
 **Fix: `tools/ground_clip.py`**
 - Runs forward kinematics on booster-mjlab's `k1.xml` (the model training uses), finds the lowest collision point over the whole clip, and shifts root z so it touches the floor. Measured per clip, not guessed
-- Verified: joint mapping matches (22 joints, 4 renamed); re-running on a grounded clip gives a 0 shift; the bounding-box estimate is within 2.6 mm of the exact mesh vertices (errs toward hovering, never sinking)
+- First version used each part's bounding box, which overestimates the drop when a foot tilts (2.6 / 4.0 / 12 mm on 508 / 113 / 1104), so grounded clips hovered slightly. Now computes each shape's lowest point exactly (sphere/capsule/cylinder/box/ellipsoid/mesh vertices) and prints which part is lowest
+- Verified: joint mapping matches (22 joints, 4 renamed); re-running on a grounded clip gives a 0 shift; MuJoCo's `mj_geomDistance` to a floor plane gives 0.00 mm on all three grounded clips
+- Magenta spheres in the training viewer are `foot_height_scan` ray hits, not contact geoms (K1 feet are meshes)
 - Batch mode: `uv run python tools/ground_clip.py ~/robotics/data/k1_motions [--upload] [--force]`
   - writes `<name>_grounded.pkl`, skips clips already up to date
   - `--upload` names the artifact after the original clip, so the fixed wave becomes `wave_000508-tracking:v1`

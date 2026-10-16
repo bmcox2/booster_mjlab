@@ -1,7 +1,8 @@
 """Shift GMR robot-motion .pkl clips so the robot's lowest collision point sits exactly on the floor.
 
 Forward kinematics is run on booster-mjlab's own K1 model (the one training uses),
-so the offset is measured per clip, not guessed.
+and each collision geom's lowest point is computed exactly from its shape (sphere, capsule,
+cylinder, box, ellipsoid, or mesh vertices), so the offset is measured per clip, not guessed.
 
 Each <name>.pkl is written to <name>_grounded.pkl next to it. Clips that are already
 grounded (or whose _grounded.pkl is newer than the source) are skipped.
@@ -36,6 +37,9 @@ RENAME = {
 
 FREE = mujoco.mjtJoint.mjJNT_FREE
 JOINT = mujoco.mjtObj.mjOBJ_JOINT
+GEOM = mujoco.mjtObj.mjOBJ_GEOM
+BODY = mujoco.mjtObj.mjOBJ_BODY
+G = mujoco.mjtGeom
 
 
 def hinge_names(model):
@@ -78,7 +82,7 @@ class Grounder:
             raise ValueError(f"GMR model has {len(self.gmr_joints)} joints but clip has {n_dof} dof columns")
 
         rob, data = self.rob, self.data
-        lowest = []
+        lowest, lowest_geom = [], []
         for root_pos, root_xyzw, dof in zip(motion["root_pos"], motion["root_rot"], motion["dof_pos"]):
             data.qpos[:] = rob.qpos0
             data.qpos[self.root_adr:self.root_adr + 3] = root_pos
@@ -86,21 +90,49 @@ class Grounder:
             data.qpos[self.dof_adr] = dof
             mujoco.mj_kinematics(rob, data)
 
-            frame_min = np.inf
-            for g in self.geoms:
-                z_row = data.geom_xmat[g].reshape(3, 3)[2]          # world-z row of the geom's rotation
-                center, half = rob.geom_aabb[g][:3], rob.geom_aabb[g][3:]
-                z = data.geom_xpos[g][2] + z_row @ center - np.abs(z_row) @ half
-                frame_min = min(frame_min, z)
-            lowest.append(frame_min)
-        return np.array(lowest)
+            zs = [self.geom_lowest_z(g) for g in self.geoms]
+            i = int(np.argmin(zs))
+            lowest.append(zs[i])
+            lowest_geom.append(self.geoms[i])
+        return np.array(lowest), lowest_geom
+
+    def geom_lowest_z(self, g):
+        """Exact lowest world z of collision geom g in the current pose.
+
+        A bounding box overestimates this when the part is tilted (up to ~1 cm on fast clips),
+        so each shape is handled exactly.
+        """
+        rob, data = self.rob, self.data
+        z0 = data.geom_xpos[g][2]
+        r = data.geom_xmat[g].reshape(3, 3)[2]  # world-z row: z of local point p is z0 + r @ p
+        s, t = rob.geom_size[g], rob.geom_type[g]
+        if t == G.mjGEOM_SPHERE:
+            return z0 - s[0]
+        if t == G.mjGEOM_CAPSULE:                # radius s0, half-length s1 along local z
+            return z0 - abs(r[2]) * s[1] - s[0]
+        if t == G.mjGEOM_CYLINDER:               # radius s0, half-length s1 along local z
+            return z0 - abs(r[2]) * s[1] - s[0] * np.sqrt(max(0.0, 1.0 - r[2] ** 2))
+        if t == G.mjGEOM_BOX:
+            return z0 - np.abs(r) @ s
+        if t == G.mjGEOM_ELLIPSOID:
+            return z0 - np.sqrt(np.sum((r * s) ** 2))
+        if t == G.mjGEOM_MESH:                   # MuJoCo collides with the convex hull; its lowest point is a vertex
+            m = rob.geom_dataid[g]
+            a, n = rob.mesh_vertadr[m], rob.mesh_vertnum[m]
+            return z0 + np.min(rob.mesh_vert[a:a + n] @ r)
+        return np.inf                            # planes, height fields, etc. are not robot parts
 
     def ground(self, src, dst):
         with open(src, "rb") as f:
             motion = pickle.load(f)
-        lowest = self.lowest_per_frame(motion)
-        dz = -lowest.min()
+        lowest, lowest_geom = self.lowest_per_frame(motion)
+        k = int(np.argmin(lowest))
+        g = lowest_geom[k]
+        gname = mujoco.mj_id2name(self.rob, GEOM, g) or f"geom {g}"
+        bname = mujoco.mj_id2name(self.rob, BODY, self.rob.geom_bodyid[g])
+        dz = -lowest[k]
         print(f"  lowest point per frame (m): min {lowest.min():+.4f}  median {np.median(lowest):+.4f}  max {lowest.max():+.4f}")
+        print(f"  lowest geom: {gname} on {bname} (frame {k})")
         print(f"  shifting root z by {dz:+.4f} m")
 
         motion["root_pos"] = np.array(motion["root_pos"], dtype=float)
