@@ -66,4 +66,5 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-16: roadmap revised (`notes/roadmap.md`): BEAT2 talking data replaces more AMASS gestures. Next: Slice 0 (`notes/plan.md`).
 - 2026-10-16: `tools/beat2_to_gmr.py` converts BEAT2 (Y-up, float WAV) to GMR input; `--find-still` ranks still, gesturing windows. BEAT2 Scott data in `~/robotics/data/BEAT2/beat_english_v2.0.0/`. Scott steps every 5–10 s, so no 20 s still window; best 10 s: `2_scott_0_1_1` 34–44 s.
 - 2026-10-16: club GPU works: host `sigrobotics` (RTX 5070 Ti), ~169k env-steps/s at 4096 envs (4.8× laptop). Run `e2p0f89y` (wave_000508 `:v3`, 2,500 it, 25 min): 50/50, hands 1.4 cm.
+- 2026-10-16: Slice 0 first run `z17z0n1q` (`talk_scott_1_1_t34-44-tracking:v0`, 10 s, 5k it, club GPU): **50/50 PASS**, hands 2.2 cm (waves 1.4–1.7), drift 2.2 cm. Video pending. `eval-tracking` needs a fix for clips longer than the 10 s episode.
 - Open questions for lead: which K1 ankle model (standard vs `-Parallel`).

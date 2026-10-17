@@ -313,10 +313,58 @@
 - The club GPU works and reproduces the laptop result, slightly better, in 25 min instead of 43, with 4× the envs
 - 4096 envs learns faster per iteration (reward 62 vs 51 at 250 it) and ends at the same quality → long BEAT2 clips can go to the club GPU
 
+## 2026-10-16: Slice 0, first BEAT2 talking clip (run z17z0n1q)
+
+**Clip**
+- `2_scott_0_1_1` 34–44 s (the `--find-still` 10 s pick: arms 61 cm/s, ankles within 3.7 cm) → `beat2_to_gmr.py` → GMR → uploaded as `talk_scott_1_1_t34-44-tracking:v0`
+- 10 s = 500 steps, the same as the task's 10 s episode length
+
+**Run**
+- Club GPU (`sigrobotics`, RTX 5070 Ti). WandB run `z17z0n1q`
+- Settings from the WandB config: `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/talk_scott_1_1_t34-44-tracking:v0 --env.scene.num-envs 4096 --agent.max-iterations 5000`
+- 5,000 iterations in 52 min (~162k env-steps/s)
+
+**Training charts** (raw values; e2p0f89y = wave_000508, 3.7 s clip, same setup)
+
+| | z17z0n1q at 1k / 3k / 5k it | e2p0f89y at 2.5k |
+|---|---|---|
+| mean_reward | 64.9 / 65.5 / 66.1 | 66.1 |
+| error_body_pos (m) | 0.0127 / 0.0107 / 0.0096 | 0.0085 |
+| error_joint_pos | 0.34 / 0.24 / 0.22 | 0.19 |
+| error_body_rot | 0.075 / 0.060 / 0.055 | 0.047 |
+| error_anchor_pos (m) | 0.093 / 0.094 / 0.090 | 0.076 |
+| action_rate_l2 (smoothness penalty) | −0.171 / −0.163 / −0.137 | −0.134 |
+
+- Episode length at max (500) from ~250 it; `ee_body_pos` terminations rare (~0.005 vs time_out ~8.2) but ~25× the wave's
+- Adaptive sampling stayed uniform (sampling_entropy ~1.0, top bin ~11% ≈ 1/10): no part of the 10 s is much harder than the rest
+- mean_std 0.53 → 0.16, flat over the last 1k; value loss ~0.003; `Loss/entropy` negative (−9), normal once std is small
+- Verdict: **done** (reward +0.6 over the last 2k it; joint error still sliding slowly, 0.24 → 0.22)
+
+**Eval** (`uv run eval-tracking --wandb-run-path bmcox2-university-of-illinois-urbana-champaign/mjlab/z17z0n1q`, model_4999, no pushes)
+
+| | e2p0f89y (wave, 3.7 s) | z17z0n1q (talking, 9.9 s) |
+|---|---|---|
+| Full clip, no falls | 50/50 | **50/50 → PASS** (≥92.9%) |
+| Hand error mean / worst | 1.4 / 5.1 cm | 2.2 / 7.3 cm |
+| Body error | 0.5 cm | 0.8 cm |
+| Joint error arms / head / legs | 1.4 / 1.4 / 1.3° | 2.1 / 1.7 / 1.7° |
+| Trunk height vs ref | +0.1 cm | −0.1 cm |
+| Drift at clip end | 2.3 cm | 2.2 cm |
+| Max foot tilt L / R | 2.4 / 3.3° | 4.1 / 1.5° |
+
+- Simulated in 88.8 s vs 1.5 s for the wave eval (2.7× longer clip); worth checking which machine/device it ran on
+
+**Takeaways**
+- **First talking clip passes: 50/50, no falls.** Same reward plateau as the waves; it needs ~3k it to settle instead of ~1–2k
+- Arms are where talking costs: hand error 2.2 vs 1.4 cm (+57%), arm joints 2.1 vs 1.4°. Legs and balance barely change
+- Drift did not grow with clip length (2.2 cm over 9.9 s vs 2.3 cm over 3.7 s)
+- Smoothness penalty matches the wave's → no sign yet that constant small talking motions make the policy jittery (confirm in `play`)
+- `eval-tracking` is fine for this clip (stops at frame 499 < 500-step episode), but on clips longer than 10 s the env's time_out would reset robots mid-eval without counting as a failure → set the eval's episode length to the clip length before evaluating the 20 s stepping run
+
 ## Next
-- Slice 0 (`notes/plan.md`): convert `2_scott_0_1_1 --start 34 --end 44` (+ `--wav`) → GMR → `ground_clip --upload` → train on the club GPU → eval → video with audio
-- Second run: a 20 s window with steps (e.g. `--max-foot-move 0.15`) to see what `ground_clip` and the tracker do with stepping
-- Optionally download more BEAT2 speakers and rerun `--find-still`; some may stand stiller than Scott
+- `play` `z17z0n1q` + record the video, dub in `scott_1_1_t34-44.wav`, check sync (Slice 0 step G)
+- Fix `eval-tracking` for clips longer than the episode, then the 20 s stepping window (`--max-foot-move 0.15`)
+- Optionally download more BEAT2 speakers and rerun `--find-still`
 - Tell the lead about the milestone 1 change; update `proposal.md` once agreed
 - `play` + record videos of me9exatd and pqh0whw0 for the lead
 - Still open with lead: K1 ankle model (standard vs `-Parallel`)
