@@ -24,16 +24,18 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
-- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `plan.md` (current step's checklist: Slice 0), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `multi-clip.md` (MultiMotionCommand design, diff from mjlab, per-clip metrics), `plan.md` (current step's checklist: Slice 0), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
 - Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 
 Key paths:
-- `src/booster_mjlab/tasks/tracking/tracking_env_cfg.py`: K1 tracking task (modifies mjlab's base tracking cfg; rewards/obs/terminations come from `mjlab.tasks.tracking.tracking_env_cfg` in `.venv`).
+- `src/booster_mjlab/tasks/tracking/tracking_env_cfg.py`: K1 tracking task (modifies mjlab's base tracking cfg; rewards/obs/terminations come from `mjlab.tasks.tracking.tracking_env_cfg` in `.venv`). Swaps in `MultiMotionCommandCfg`.
+- `src/booster_mjlab/tasks/tracking/multi_motion_command.py`: `MultiMotionCommand` (subclass of mjlab's `MotionCommand`; never edit mjlab, it is pinned).
 - `src/booster_mjlab/tasks/tracking/config/k1/`: `env_cfgs.py`, `rl_cfg.py`.
 - `src/booster_mjlab/robots/booster_k1/`: robot model (`xmls/`), constants, actuators.
 - `src/booster_mjlab/motion/`: motion loading.
-- `src/booster_mjlab/scripts/`: `train`, `play`, `upload_motion`, `visualize_motions`, `eval_tracking`.
+- `src/booster_mjlab/scripts/`: `train`, `play`, `upload_motion`, `combine_motions`, `visualize_motions`, `eval_tracking`.
+- `tests/test_multi_motion.py`: `uv run --with pytest pytest tests/ -q` (CPU, needs `logs/motions/waves_2clip.npz`).
 - `tools/ground_clip.py`: ground + flatten feet of GMR clips before upload.
 - `docs/motion_preparation.md`: converting/uploading GMR `.pkl` / BeyondMimic `.csv` clips.
 
@@ -45,6 +47,8 @@ uv run play <TASK> --wandb-run-path bmcox2-university-of-illinois-urbana-champai
 uv run visualize-motions --dataset whirlwind-ams/lafan_locomotion_k1 --task <TASK>
 uv run upload-motion --input-file <clip.pkl> --entity bmcox2-university-of-illinois-urbana-champaign
 uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name <artifact printed by upload-motion> --env.scene.num-envs 4096
+uv run combine-motions <artifact> <artifact> ... --artifact-name <name>   # multi-clip file, same train command
+uv run eval-tracking --wandb-run-path bmcox2-university-of-illinois-urbana-champaign/mjlab/<run-id>   # one row per clip
 ```
 Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Tracking-Flat-Booster-K1` (project).
 
@@ -66,5 +70,6 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-16: roadmap revised (`notes/roadmap.md`): BEAT2 talking data replaces more AMASS gestures. Next: Slice 0 (`notes/plan.md`).
 - 2026-10-16: `tools/beat2_to_gmr.py` converts BEAT2 (Y-up, float WAV) to GMR input; `--find-still` ranks still, gesturing windows. BEAT2 Scott data in `~/robotics/data/BEAT2/beat_english_v2.0.0/`. Scott steps every 5–10 s, so no 20 s still window; best 10 s: `2_scott_0_1_1` 34–44 s.
 - 2026-10-16: club GPU works: host `sigrobotics` (RTX 5070 Ti), ~169k env-steps/s at 4096 envs (4.8× laptop). Run `e2p0f89y` (wave_000508 `:v3`, 2,500 it, 25 min): 50/50, hands 1.4 cm.
-- 2026-10-16: Slice 0 first run `z17z0n1q` (`talk_scott_1_1_t34-44-tracking:v0`, 10 s, 5k it, club GPU): **50/50 PASS**, hands 2.2 cm (waves 1.4–1.7), drift 2.2 cm. Video pending. `eval-tracking` needs a fix for clips longer than the 10 s episode.
+- 2026-10-16: Slice 0 first run `z17z0n1q` (`talk_scott_1_1_t34-44-tracking:v0`, 10 s, 5k it, club GPU): **50/50 PASS**, hands 2.2 cm (waves 1.4–1.7), drift 2.2 cm. Video pending.
+- 2026-10-16: multi-clip tracking built (`MultiMotionCommand`, `combine-motions`, per-clip `eval-tracking`; `notes/multi-clip.md`). Tests pass on CPU. `e2p0f89y` (one wave) fails 49/50 on the other wave → next: first multi-clip run on the club GPU.
 - Open questions for lead: which K1 ankle model (standard vs `-Parallel`).

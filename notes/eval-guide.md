@@ -38,6 +38,17 @@ Takes seconds. Results print and save to `logs/eval/<run>_<checkpoint>_<motion>[
 Hand/body errors are measured after re-anchoring the reference to the robot's current position and
 heading (like training), so slow drift shows up only in the drift line, not twice.
 
+## Combined (multi-clip) motion files
+A file built by `combine-motions` is evaluated **clip by clip**: 50 robots per clip, all clips at once,
+each robot counted only until the end of its own clip. Output is one row per clip (same columns as
+above) plus `All clips: k/N pass`. For a single clip you get the detailed block above.
+```
+uv run eval-tracking --wandb-run-path ... --motion-file logs/motions/waves_2clip.npz   # every clip
+uv run eval-tracking --wandb-run-path ... --clips wave_000508 wave_001104             # some clips
+```
+The JSON has `clips` (one summary per clip) and `rollouts` (each tagged with its `clip`). Episode
+length is set from the longest clip, so long clips are never cut short. More: `multi-clip.md`.
+
 ## Comparing runs
 Evaluate both on the **same motion version** (`--registry-name ...:vN`); otherwise you compare clips,
 not policies. Compare the JSON `summary` blocks, or just the printed tables.

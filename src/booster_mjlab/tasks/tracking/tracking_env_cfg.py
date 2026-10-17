@@ -1,5 +1,6 @@
 """Booster motion tracking environment configuration."""
 
+from booster_mjlab.tasks.tracking.multi_motion_command import MultiMotionCommandCfg
 from booster_mjlab.terrains.contact import terrain_collisions
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
@@ -15,6 +16,10 @@ from mjlab.utils.noise import UniformNoiseCfg as Unoise
 def make_tracking_env_cfg() -> ManagerBasedRlEnvCfg:
     """Create base tracking task configuration."""
     cfg = mjlab_make_tracking_env_cfg()
+
+    # Multi-clip motion command (a single-clip file behaves exactly like mjlab's MotionCommand).
+    assert cfg.commands is not None
+    cfg.commands["motion"] = MultiMotionCommandCfg.from_motion_cfg(cfg.commands["motion"])
 
     cfg.observations["actor"].terms["projected_gravity"] = ObservationTermCfg(
         func=mdp.projected_gravity,

@@ -352,18 +352,47 @@
 | Drift at clip end | 2.3 cm | 2.2 cm |
 | Max foot tilt L / R | 2.4 / 3.3° | 4.1 / 1.5° |
 
-- Simulated in 88.8 s vs 1.5 s for the wave eval (2.7× longer clip); worth checking which machine/device it ran on
+- Simulated in 88.8 s vs 1.5 s for the wave eval: it ran on CPU (laptop dGPU was out, so eval's device fell back to `cpu`); a CPU re-run gave identical numbers in 76.7 s
 
 **Takeaways**
 - **First talking clip passes: 50/50, no falls.** Same reward plateau as the waves; it needs ~3k it to settle instead of ~1–2k
 - Arms are where talking costs: hand error 2.2 vs 1.4 cm (+57%), arm joints 2.1 vs 1.4°. Legs and balance barely change
 - Drift did not grow with clip length (2.2 cm over 9.9 s vs 2.3 cm over 3.7 s)
 - Smoothness penalty matches the wave's → no sign yet that constant small talking motions make the policy jittery (confirm in `play`)
-- `eval-tracking` is fine for this clip (stops at frame 499 < 500-step episode), but on clips longer than 10 s the env's time_out would reset robots mid-eval without counting as a failure → set the eval's episode length to the clip length before evaluating the 20 s stepping run
+- ~~`eval-tracking` would cut clips longer than 10 s short~~ **Wrong** (corrected 2026-10-16, next entry): eval loads the play config, whose episode length is ~infinite, so long clips were always fine. Eval now also sets the episode length from the clip length explicitly
+
+## 2026-10-16: multi-clip tracking (MultiMotionCommand)
+
+**Built** (mjlab untouched; design and diff in `notes/multi-clip.md`)
+- `src/booster_mjlab/tasks/tracking/multi_motion_command.py`: `MultiMotionCommand(MotionCommand)` + cfg. Per robot: `clip_ids` + `clip_frames`; lookup row `clip_starts[clip] + frame` stored in mjlab's `time_steps`, so obs/rewards/terminations/ONNX are unchanged. A robot at its clip's last frame is resampled, never steps into the next clip. Adaptive sampling: ~1 s bins per clip (smoothing stops at clip ends). Per-clip W&B metrics: `Metrics/motion/clip/{error_body_pos,error_joint_pos,error_anchor_pos,fail_rate,sample_share}/<clip>`
+- Wired into `Mjlab-Tracking-Flat-Booster-K1` (`tracking_env_cfg.py`); same train command, single `--registry-name`. Single-clip files behave exactly like before
+- `uv run combine-motions`: W&B artifacts / tracking `.npz` / GMR `.pkl` → one `motion.npz` with `clip_lengths`, `clip_names`, `clip_sources` → one W&B artifact (`--no-upload --output` for local)
+- `eval-tracking`: every clip of a combined file at once (50 robots per clip), one row per clip, `--clips` to pick; episode length set from the longest clip
+
+**Tests** (all CPU; laptop dGPU still out)
+- 2-clip file: `uv run combine-motions .../wave_000508-tracking:v3 .../wave_001104-tracking:v2 --output logs/motions/waves_2clip.npz --no-upload` → 188 + 147 frames, bins 4 + 3
+- `uv run --with pytest pytest tests/test_multi_motion.py -q`: **9 passed** (1 min 44 s): rows stay inside their own clip (all 3 sampling modes, command-only and full env with falls), adaptive bins and smoothing stay within a clip, single-clip sampling identical to mjlab's (same seeds), per-clip metrics logged. Mutation check: putting the wrap back to "end of file" fails the boundary test
+- CPU training: `WANDB_MODE=offline uv run train Mjlab-Tracking-Flat-Booster-K1 --env.commands.motion.motion-file logs/motions/waves_2clip.npz --env.scene.num-envs 64 --agent.max-iterations 10 --gpu-ids None` → ran, ~34 s/it, per-clip metrics in the console, checkpoint + ONNX export saved
+- Regression: `eval-tracking` on `z17z0n1q` (CPU) reproduces the earlier result exactly (50/50, hands 2.2/7.3 cm, ...)
+
+**Eval: one-clip policy on two clips** (`uv run eval-tracking --wandb-run-path .../e2p0f89y --motion-file logs/motions/waves_2clip.npz --device cpu`)
+
+| Clip | No falls | Hands mean / worst | Body | Joints arms/head/legs | Drift |
+|---|---|---|---|---|---|
+| wave_000508 (trained on) | 50/50 | 1.4 / 4.7 cm | 0.5 cm | 1.4 / 1.3 / 1.3° | 2.2 cm |
+| wave_001104 (never seen) | **1/50** | 12.5 / 31.0 cm | 6.4 cm | 9.9 / 8.5 / 10.4° | — |
+
+- Failures on wave_001104: `ee_body_pos` 35, `anchor_pos` 8, both 6; at 1.2–2.8 s
+
+**Takeaways**
+- A one-clip policy doesn't transfer even to another wave → multi-clip training is needed before held-out speakers mean anything
+- Starts are weighted by clip length (uniform floor): long BEAT2 takes will dominate short gestures unless adaptive sampling or a per-clip weight corrects it; watch `clip/sample_share`
+- Correction: the ">10 s eval bug" in the previous entry didn't exist (play config ~infinite episode)
 
 ## Next
+- First multi-clip GPU run (club GPU): `combine-motions` the 2 waves (+ `talk_scott_1_1_t34-44:v0`) → train → eval per clip; compare each clip with its single-clip run
 - `play` `z17z0n1q` + record the video, dub in `scott_1_1_t34-44.wav`, check sync (Slice 0 step G)
-- Fix `eval-tracking` for clips longer than the episode, then the 20 s stepping window (`--max-foot-move 0.15`)
+- The 20 s stepping window (`--max-foot-move 0.15`)
 - Optionally download more BEAT2 speakers and rerun `--find-still`
 - Tell the lead about the milestone 1 change; update `proposal.md` once agreed
 - `play` + record videos of me9exatd and pqh0whw0 for the lead
