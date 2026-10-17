@@ -542,10 +542,61 @@
 - One bad clip can wreck a multi-clip run through adaptive sampling. Watch `sampling_top1_prob` early; if it's far above 1/(bins), look at that clip's `sample_share` and its reference
 - The general tracker generalizes (held-out ≈ train, pushes don't matter) but is ~3× worse than single-clip policies; first see how much fair sampling recovers before changing the network or observations (no future frames in the obs; 512-256-128)
 
+## 2026-10-17: general tracker on clean data (s5cdzms7): fair sampling fixes the plateau
+
+**Run**
+- Club GPU (`sigrobotics`). WandB run `s5cdzms7` (`beat2-general-v2`), 10,000 it in 2.6 h (~160k env-steps/s), seed 42
+- `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v2 --env.scene.num-envs 4096 --agent.max-iterations 10000 --agent.run-name beat2-general-v2` (config confirms `adaptive_uniform_ratio = 1`)
+
+**Training charts vs 0lg80c7d** (raw, averaged ±150 it)
+
+| | s5cdzms7 at 1k / 2.5k / 5k / 8.5k | 0lg80c7d at 10k | 0lg80c7d at 30k | z17z0n1q (1 clip) at 5k |
+|---|---|---|---|---|
+| mean_reward | 63.1 / 64.8 / 65.3 / 65.5 | 55.9 | 55.0 | 66.1 |
+| error_body_pos (m) | 0.0167 / 0.0127 / 0.0116 / 0.0114 | 0.0202 | 0.0195 | 0.0096 |
+| error_joint_pos | 0.49 / 0.31 / 0.28 / 0.27 | 0.46 | 0.47 | 0.22 |
+| error_body_rot | 0.109 / 0.075 / 0.070 / 0.071 | 0.128 | 0.128 | 0.055 |
+| `ee_body_pos` terminations | 0.021 / 0.005 / 0.009 / ~0.01 | 0.40 | 0.31 | ~0.005 |
+| action_rate_l2 | −0.24 / −0.18 / −0.16 / −0.17 | −0.54 | −0.71 | −0.14 |
+| mean_std | 0.22 / 0.18 / 0.175 / 0.173 | 0.36 | 0.40 | 0.16 |
+| sampling_top1_prob | 0.006 / 0.002 / 0.004 / 0.003 | 0.62 | 0.65 | |
+
+- Episode length 499/500 from ~1k it. Sampler spread evenly (sampling_entropy ~0.999; top clip at end `miranda_0_13_13_t25-35` 1.9% vs uniform 0.97%); every clip's fail_rate 0 at the end
+- Per clip (final): median error_body_pos 0.0105 m; worst `lawrence_0_7_7_t53-63` 0.031, `solomon_0_1_1_t18-28` 0.029, `sophie_0_14_14_t52-62` 0.028, `lawrence_0_6_6_t71-81` 0.027
+- Mostly flat after ~5k it (body err 0.0116 → 0.0114 at 8.5k)
+- **Two instability episodes**, ~6.9k–7.5k (recovered) and 9.0k–end (not recovered): mean_std rises first (0.173 → 0.21–0.26), then joint error (0.27 → 0.34–0.59), `ee_body_pos` terminations (0.01 → 0.2–0.7), and only then the sampler concentrates (top1 0.003 → 0.06–0.16). Reward 65.5 → 61.4 (median, last 500 it). Likely PPO noise drift (entropy bonus 0.005 pushing std up once tracking is good), with adaptive sampling amplifying it; not confirmed
+- Training errors include the exploration noise; eval uses the noise-free policy, so model_9999 may still be fine. Best stretch: 8.0k–9.0k → `model_8500.pt`
+- Verdict: **done**; use `model_8500.pt` (eval below). Not checked in `play` yet
+
+**Eval** (club GPU; `uv run eval-tracking --wandb-run-path .../s5cdzms7 --checkpoint-name model_8500.pt --registry-name .../beat2-10s-heldout:v2 --device cuda:0`, same for model_9999, train set, held-out `--push`)
+
+| Hand error, mean of clip means (cm) | s5cdzms7 model_8500 | 0lg80c7d model_29999 |
+|---|---|---|
+| Held-out, all | **3.05** (42/43 clips, 2149/2150 rollouts) | 6.7 (43/44) |
+| Nidal / Ayana | **2.3 / 4.6** | 5.8 / 8.7 |
+| Train, all | **2.46** (100/103 clips, 5145/5150) | 5.8 (103/106) |
+| Sophie / Wayne / Miranda / Lawrence / Solomon / Scott | **1.95 / 1.95 / 2.6 / 2.9 / 3.1 / 4.1** | 4.2 / 4.5 / 7.3 / 6.5 / 7.7 / 9.7 |
+
+- **model_8500 beats model_9999**: held-out 3.05 vs 3.19 cm, 42 vs 41 clips at 50/50, Ayana max foot tilt 28 vs 38°. Use model_8500
+- Pushes change nothing (mean +0.00 cm; same single failure)
+- No train clip above 5 cm (0lg80c7d: most). `scott_0_1_1_t34-44`: 5.0 cm (0lg80c7d 12.7; single-clip `z17z0n1q` 2.2)
+- Failures: held-out 1 rollout, `ayana_0_14_14_t36-46` at 6.3 s (`ee_body_pos`; with pushes `anchor_ori` at 6.9 s). Train 5 rollouts on `lawrence_0_12_12_t26-36` (3), `lawrence_0_13_13_t21-31`, `solomon_0_15_15_t43-53`, all at t = 0.08–0.10 s: the same 3 clips and time as in 0lg80c7d → start-of-clip issue with these references + the ±0.1 rad start jitter, not the policy
+- Generalization gap now visible: train 2.5 vs held-out 3.05 cm; Nidal (low motion) ≈ train, Ayana (expressive) 4.6 cm, worst `ayana_0_13_13_t38-48` 6.6 cm
+- Body error 0.7–1.5 cm, arm joints 2–5°, drift ~3 cm (Solomon 5.5)
+- **Foot tilt still high**: max tilt on floor > 10° on Lawrence 20/22, Solomon 13/13, Nidal 15/29 clips; worst ~29°. Main open quality / sim-to-real issue
+
+**Takeaways**
+- Clean data + `adaptive_uniform_ratio = 1.0` halved the general tracker's errors in a third of the iterations: hands 5.8 → 2.5 cm (train), 6.7 → 3.05 cm (held-out). Single-clip policies: 1.4–2.2 cm
+- A general BEAT2 tracker that passes 142/146 clips at 50/50 (the rest 47–49/50) with ~2.5–3 cm hands; Ayana-style expressive motion is the hardest
+- Watch mean_std late in runs: a rise from its plateau came before both dips
+
 ## Next
-- Retrain on v2 (club GPU, `git pull` first for the sampler change): `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v2 --env.scene.num-envs 4096 --agent.max-iterations 10000`; check `sampling_top1_prob` stays < ~0.05 and `error_body_pos` keeps falling past 0.019
-- Eval it on `beat2-10s-train:v2` and `beat2-10s-heldout:v2` (+ `--push`); compare per speaker with `0lg80c7d` (train 5.8 / held-out 6.7 cm)
-- If still well above single-clip (~2 cm): try future reference frames in the obs and/or a bigger network
+- `play` `s5cdzms7` model_8500 (`--wandb-checkpoint-name model_8500.pt`): arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip; record a talking clip + dub audio (Slice 0 step G, now with the general policy)
+- Foot tilt (> 10° on most Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
+- The 3 clips that fail at t = 0.1 s in eval (`lawrence_0_12_12_t26-36`, `lawrence_0_13_13_t21-31`, `solomon_0_15_15_t43-53`): look at their first frames
+- More speakers (BEAT2 has more) to shrink the Ayana gap
+- If late-run noise drift repeats: lower `entropy_coef` (0.005, `rl_cfg.py`) or cap the policy std
+- If hands still well above single-clip: try future reference frames in the obs and/or a bigger network
 - Foot tilt 10–38° on many clips: look in `play`, then consider a foot-flatness reward
 - `play` `0lg80c7d` on `scott_0_1_1_t34-44` and a Lawrence clip (arms, foot roll)
 - `play` `z17z0n1q` + record the video, dub in `scott_1_1_t34-44.wav`, check sync (Slice 0 step G)
