@@ -37,6 +37,9 @@ Key paths:
 - `src/booster_mjlab/scripts/`: `train`, `play`, `upload_motion`, `combine_motions`, `visualize_motions`, `eval_tracking`.
 - `tests/test_multi_motion.py`: `uv run --with pytest pytest tests/ -q` (CPU, needs `logs/motions/waves_2clip.npz`).
 - `tools/ground_clip.py`: ground + flatten feet of GMR clips before upload.
+- `tools/beat2_to_gmr.py`: BEAT2 take → GMR input (`--find-still` ranks windows). Runs with GMR's venv or the booster venv.
+- `tools/gmr_retarget.py`: headless GMR retarget (no viewer). Must run with `~/projects/GMR/.venv/bin/python`.
+- `tools/beat2_batch.py`: BEAT2 speakers → 10 s windows → GMR → ground_clip → QC table (`notes/beat2-qc.md`) → `combine-motions` train / held-out artifacts. Cached per stage. `uv run python tools/beat2_batch.py --train ... --heldout ...`
 - `docs/motion_preparation.md`: converting/uploading GMR `.pkl` / BeyondMimic `.csv` clips.
 
 ## Commands
@@ -72,4 +75,6 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-16: club GPU works: host `sigrobotics` (RTX 5070 Ti), ~169k env-steps/s at 4096 envs (4.8× laptop). Run `e2p0f89y` (wave_000508 `:v3`, 2,500 it, 25 min): 50/50, hands 1.4 cm.
 - 2026-10-16: Slice 0 first run `z17z0n1q` (`talk_scott_1_1_t34-44-tracking:v0`, 10 s, 5k it, club GPU): **50/50 PASS**, hands 2.2 cm (waves 1.4–1.7), drift 2.2 cm. Video pending.
 - 2026-10-16: multi-clip tracking built (`MultiMotionCommand`, `combine-motions`, per-clip `eval-tracking`; `notes/multi-clip.md`). Tests pass on CPU. `e2p0f89y` (one wave) fails 49/50 on the other wave → next: first multi-clip run on the club GPU.
+- 2026-10-16: multi-clip sanity run `8ku1opzv` (`waves-2clip:v0`, 4096 envs, 2,500 it, club GPU): 50/50 on both waves, matching the single-clip policies (hands 1.5 / 1.6 cm). Multi-clip works.
+- 2026-10-16: BEAT2 batch (`tools/beat2_batch.py`, QC in `notes/beat2-qc.md`): 152 clips, 12 severe excluded → `beat2-10s-train:v0` (98 clips, 16.3 min, 6 speakers) and `beat2-10s-heldout:v0` (42 clips, 7.0 min; Nidal, Ayana). Read held-out eval per speaker (Nidal is low-motion). Next: first general-tracker run.
 - Open questions for lead: which K1 ankle model (standard vs `-Parallel`).

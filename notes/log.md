@@ -389,8 +389,85 @@
 - Starts are weighted by clip length (uniform floor): long BEAT2 takes will dominate short gestures unless adaptive sampling or a per-clip weight corrects it; watch `clip/sample_share`
 - Correction: the ">10 s eval bug" in the previous entry didn't exist (play config ~infinite episode)
 
+## 2026-10-16: multi-clip sanity run (8ku1opzv): one policy, two waves
+
+**Run**
+- Club GPU (`sigrobotics`, RTX 5070 Ti). WandB run `8ku1opzv` (`multiclip-sanity`)
+- `uv run combine-motions .../wave_000508-tracking:v3 .../wave_001104-tracking:v2 --artifact-name waves-2clip` → `waves-2clip:v0` (188 + 147 frames)
+- Settings from the WandB config: `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/waves-2clip:v0 --env.scene.num-envs 4096 --agent.max-iterations 2500 --agent.run-name multiclip-sanity`
+- 2,500 iterations in 25.5 min, ~166k env-steps/s (single-clip `e2p0f89y`: 169k → no overhead from MultiMotionCommand)
+
+**Training charts** (raw, at 2,450 it)
+- reward 41.9 (100 it) → 60.8 (250) → 64.6 (1k) → 65.6, +0.2 over the last 500; episode length at max by 250
+- `ee_body_pos` terminations 0.17 → 0.0009; `anchor_pos` 0; mean_std 0.52 → 0.16; value loss 0.0026
+
+| Per clip | body err | joint err | fail_rate | sample_share |
+|---|---|---|---|---|
+| wave_000508 | 0.0085 m (`e2p0f89y`: 0.0087) | 0.190 (0.190) | 0.0000 | 0.57 |
+| wave_001104 | 0.0094 m (`pqh0whw0`: 0.0107) | 0.204 (0.239) | 0.0002 | 0.43 |
+
+- sample_share stayed at the length share (4/7, 3/7; sampling_entropy 0.9999): neither clip is hard. Brief wobble to 0.55/0.45 around 1k it = adaptive sampling reacting to wave_001104's few failures (fail_rate 0.0016)
+
+**Eval** (`uv run eval-tracking --wandb-run-path .../8ku1opzv`, model_2499, laptop CPU)
+
+| Clip | 8ku1opzv (multi) | single-clip policy |
+|---|---|---|
+| wave_000508 | 50/50, hands 1.5 / 5.0 cm, body 0.5, joints 1.4 / 1.3 / 1.2°, drift 2.2, tilt 3.4 / 2.5° | `e2p0f89y`: 50/50, 1.4 / 5.1, 0.5, 1.4 / 1.4 / 1.3°, 2.3, 2.4 / 3.3° |
+| wave_001104 | 50/50, hands 1.6 / 4.5 cm, body 0.5, joints 1.5 / 1.4 / 0.9°, drift 3.0, tilt 3.8 / 3.7° | `pqh0whw0`: 50/50, 1.7 / 5.8, 0.6, 1.8 / 1.9 / 1.2°, 3.1, 3.0 / 3.3° |
+
+**Takeaways**
+- **Multi-clip works:** one policy matches both single-clip policies on both clips, in the same 2,500 it and the same wall time. Sharing a policy between two waves costs nothing
+- Compare: `e2p0f89y` (wave_000508 only) gets 1/50 on wave_001104; this policy gets 50/50 on both
+- wave_001104 slightly better than `pqh0whw0`, but that run had 1024 envs (laptop), so not a fair comparison
+- Per-clip metrics, fail_rate and sample_share all log and read as expected on a real GPU run
+
+## 2026-10-16: BEAT2 batch: 152 clips, QC, train / held-out artifacts
+
+**Built**
+- `tools/beat2_batch.py`: per take, `--find-still` (10 s windows, ankles within 10 cm, top 2 non-overlapping by arm activity) → `beat2_to_gmr` convert → headless GMR → `ground_clip` → QC on booster's K1 → `notes/beat2-qc.md` → `combine-motions` train + held-out. Every stage cached per clip (rerun = only new takes); files written atomically; `--exclude {none,severe,flagged}`
+- `tools/gmr_retarget.py`: GMR retarget with no viewer (GMR's venv). Keeps frame 0 (GMR's script skips it, so audio was 1 frame off) and warms the IK up on it; otherwise matches GMR's output to 0.0002 rad. 3 s per 10 s clip
+- `beat2_to_gmr.py`: `top_non_overlapping()` pulled out of `--find-still` (same output)
+
+**Run**
+- `uv run python tools/beat2_batch.py --train 2_scott 1_wayne 3_solomon 4_lawrence 7_sophie 9_miranda --heldout 11_nidal 21_ayana --exclude severe --entity bmcox2-university-of-illinois-urbana-champaign`
+- Artifacts: **`beat2-10s-train:v0`** (98 clips, 16.3 min) and **`beat2-10s-heldout:v0`** (42 clips, 7.0 min)
+- Full pipeline ~45 min for 152 clips on the laptop CPU (GMR 3 s/clip, ground ~1.5 s/clip, combine ~5 s/clip FK)
+
+| Speaker | Split | Takes | Clips | Kept | Median K1 hand speed |
+|---|---|---|---|---|---|
+| scott | train | 15 | 3 | 2 | 16.0 cm/s |
+| wayne | train | 15 | 25 | 24 | 5.7 |
+| solomon | train | 15 | 14 | 13 | 10.1 |
+| lawrence | train | 15 | 24 | 22 | 11.8 |
+| sophie | train | 15 | 28 | 24 | 5.3 |
+| miranda | train | 7 | 14 | 13 | 9.5 |
+| nidal | held-out | 15 | 30 | 29 | 5.3 |
+| ayana | held-out | 7 | 14 | 13 | 9.8 |
+
+**QC** (calibrated on clips that trained to 50/50: K1 feet ≤ 1.8 cm, trunk ≤ 1.8 cm, knees 14–36°, 0 limit frames)
+- Severe → excluded (12): upper-arm twist at its limit > 50% of frames (9; straight arm, so GMR's IK drifts the twist to the limit), ground_clip IK failure (2), trunk-drop outlier (2)
+- Kept: head or shoulder held at a limit (valid K1 motion, just clipped), little arm motion (< 5 cm/s), knee outliers
+- Fixes while calibrating: a straight elbow (elbow bend at 0) is a normal pose, not a limit hit; K1 feet flag 5 → 8 cm (K1 is ~0.6× human, so the 10 cm human filter allows ~6 cm); dropped feet from the batch-relative outlier test (median 1 cm, long normal tail → flagged 31 normal weight shifts)
+
+**Held-out skew** (share of clips)
+
+| | Train | Held-out | Nidal | Ayana |
+|---|---|---|---|---|
+| Head at limit | 6% | 9% | 3% | 21% |
+| Shoulder at limit | 21% | 18% | 10% | 36% |
+| Upper-arm twist | 7% | 5% | 3% | 7% |
+| Hands < 5 cm/s | 15% | **32%** | **43%** | 7% |
+
+**Takeaways**
+- Held-out is **not** skewed by retargeting limits overall (rates match training); the two speakers are opposite ends: Ayana hits head/shoulder limits most of anyone, Nidal least
+- The real skew is arm activity: Nidal is a calm speaker (43% low-motion clips) → pooled held-out numbers would flatter the policy. **Always read held-out eval per speaker:** Ayana = hard test, Nidal = easy one
+- Scott steps too much for 10 s still windows (3 clips from 15 takes): training is uneven across speakers (Sophie 24 kept, Scott 2)
+- Only 5 takes have audio downloaded; fine for training, needed only for dubbed videos
+- Process: a `pkill -f` pattern matched its own shell and killed the command before it ran; kill by PID
+
 ## Next
-- First multi-clip GPU run (club GPU): `combine-motions` the 2 waves (+ `talk_scott_1_1_t34-44:v0`) → train → eval per clip; compare each clip with its single-clip run
+- First general-tracker run (club GPU): `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v0 --env.scene.num-envs 4096`; 16 min of motion vs 6.7 s in the sanity run, so expect many more iterations (watch per-clip fail_rate / sample_share)
+- Eval it on `beat2-10s-heldout:v0` (`--registry-name`), per speaker (Ayana hard, Nidal easy), and on the train set for the generalization gap
 - `play` `z17z0n1q` + record the video, dub in `scott_1_1_t34-44.wav`, check sync (Slice 0 step G)
 - The 20 s stepping window (`--max-foot-move 0.15`)
 - Optionally download more BEAT2 speakers and rerun `--find-still`

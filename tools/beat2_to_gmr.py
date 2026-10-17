@@ -172,6 +172,17 @@ def score_windows(name: str, take: dict, model_dir: Path, window_s: float) -> li
     return rows
 
 
+def top_non_overlapping(ranked: list[dict], top: int) -> list[dict]:
+    """The first `top` windows of `ranked` (best first), skipping any that overlap an earlier pick in the same take."""
+    picks = []
+    for r in ranked:
+        if all(p["take"] != r["take"] or r["end"] <= p["start"] or r["start"] >= p["end"] for p in picks):
+            picks.append(r)
+        if len(picks) == top:
+            break
+    return picks
+
+
 def find_still(paths: list[Path], args) -> None:
     rows, lengths = [], {}
     for path in paths:
@@ -195,12 +206,7 @@ def find_still(paths: list[Path], args) -> None:
         print(f"[rank] WARNING: no window keeps the ankles within {args.max_foot_move * 100:.0f} cm "
               "(raise --max-foot-move or scan more takes). Stillest windows instead:")
 
-    picks = []  # best first, no two overlapping in the same take
-    for r in ranked:
-        if all(p["take"] != r["take"] or r["end"] <= p["start"] or r["start"] >= p["end"] for p in picks):
-            picks.append(r)
-        if len(picks) == args.top:
-            break
+    picks = top_non_overlapping(ranked, args.top)
 
     print(f"\n  #  {'take':<22} {'window':>13}  {'arm cm/s':>8}  {'feet move cm':>12}  {'pelvis drop cm':>14}")
     for i, r in enumerate(picks, 1):
