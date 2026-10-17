@@ -69,6 +69,9 @@ ROBUST_Z = 3.5  # also flag values this many robust SDs (median / MAD) from the 
 # Severe = the reference itself is suspect, so `--exclude severe` drops it. Head or shoulder held at a
 # limit is not severe: the clipped pose is still valid K1 motion, only less expressive.
 SEVERE_TWIST_FRAC = 0.5  # upper-arm twist at its limit on more than this share of frames
+# Arm on the wrong side: the K1's hand is on average this far behind the trunk while the human's wrist is
+# this far in front of the pelvis (GMR's IK stuck with the arm swung back). Severe: the reference is wrong.
+ARM_BEHIND_M, HUMAN_FRONT_M = 0.05, 0.05
 # Feet are left out: K1 foot motion is ~1 cm for most clips with a long tail of weight shifts (4-7 cm,
 # within what --max-foot-move allows), so a batch-relative test flags normal speakers. The fixed
 # feet_k1_cm limit still applies.
@@ -168,7 +171,7 @@ class K1Checker:
             R, o = data.xmat[b["Trunk"]].reshape(3, 3), data.xpos[b["Trunk"]]
             hands.append([R.T @ (data.xpos[b[h]] - o) for h in ("left_hand_link", "right_hand_link")])
             feet.append([data.xpos[b[f]][:2].copy() for f in ("left_foot_link", "right_foot_link")])
-        feet, hands = np.array(feet), np.array(hands)  # (T, 2, 2), (T, 2, 3)
+        feet, hands = np.array(feet), np.array(hands)  # (T, 2, 2), (T, 2, 3); hands: trunk frame, x forward
         dof = np.asarray(m["dof_pos"])
         lo, hi = self.limits[:, 0], self.limits[:, 1]
         straight_lo, straight_hi = self.elbow_bend & (lo == 0), self.elbow_bend & (hi == 0)  # straight-arm side
@@ -182,6 +185,7 @@ class K1Checker:
         return {
             "feet_k1_cm": float(np.linalg.norm(feet - np.median(feet, axis=0), axis=-1).max() * 100),
             "arms_k1_cm_s": float(np.linalg.norm(np.diff(hands, axis=0), axis=-1).mean() * fps * 100),
+            "hand_fwd_k1_m": [float(v) for v in hands[:, :, 0].mean(axis=0)],
             "trunk_drop_cm": float(np.ptp(np.asarray(m["root_pos"])[:, 2]) * 100),
             "knee_min_deg": [float(v) for v in knee.min(axis=0)],
             "knee_max_deg": float(knee.max()),
@@ -190,6 +194,14 @@ class K1Checker:
             "limit_kinds": {k: float(v.mean()) for k, v in kinds.items()},
             "limit_joints": {self.joint_names[j]: int(near[:, j].sum()) for j in np.flatnonzero(near.any(axis=0))},
         }
+
+
+def human_wrist_forward(smplx_npz: Path, model_dir: Path) -> list[float]:
+    """Mean (left, right) wrist position along the human's forward axis, relative to the pelvis, m."""
+    take = b2g.read_take(smplx_npz, model_dir, "+z", verbose=False)
+    pos, pelvis_rot = b2g.body_joint_positions(take, model_dir)
+    return [float(pelvis_rot.inv().apply(pos[:, j] - pos[:, 0])[:, 2].mean())  # SMPL-X body +z = forward
+            for j in (b2g.L_WRIST, b2g.R_WRIST)]
 
 
 def ik_failures(log: Path) -> int:
@@ -231,6 +243,10 @@ def flag(rows: list[dict]) -> None:
             severe.append(next(x for x in f if x.startswith("upper-arm twist")))
         if r["ik_fail_frames"]:
             severe.append(next(x for x in f if x.startswith("ground IK failed")))
+        for side, k1, human in zip(("left", "right"), r["hand_fwd_k1_m"], r["hand_fwd_human_m"]):
+            if k1 < -ARM_BEHIND_M and human > HUMAN_FRONT_M:
+                f.append(f"{side} arm behind body (human's in front)")
+                severe.append(f[-1])
         r["flags"], r["severe"] = f, severe
 
 
@@ -314,7 +330,8 @@ def write_qc(rows: list[dict], notes: dict, args, path: Path) -> None:
         f"Outlier: more than {ROBUST_Z:g} robust SDs (median / MAD) from this batch on arms, trunk, or knee "
         "(not feet: most clips move ~1 cm with a long tail of normal weight shifts; the fixed limit covers feet).",
         f"**Severe** (dropped by `--exclude severe`): upper-arm twist at its limit on > {SEVERE_TWIST_FRAC:.0%} of frames, "
-        "any ground_clip IK failure, or a trunk-drop outlier. Head or shoulder held at a limit is not severe: "
+        f"any ground_clip IK failure, a trunk-drop outlier, or an arm on the wrong side (K1 hand > {ARM_BEHIND_M * 100:.0f} cm "
+        f"behind the trunk while the human's wrist is > {HUMAN_FRONT_M * 100:.0f} cm in front). Head or shoulder held at a limit is not severe: "
         "the clipped pose is still valid K1 motion.",
         "",
         "| split | clip | source | feet human / K1 (cm) | arms human / K1 (cm/s) | trunk drop (cm) | knees L / R (deg) "
@@ -419,7 +436,8 @@ def main() -> None:
     rows = []
     for c in clips:
         r = {k: v for k, v in c.items() if k not in ("smplx", "k1", "grounded")}
-        r.update(take=c["take"].stem, max_foot_move_cm=args.max_foot_move * 100, ik_fail_frames=ik_failures(c["grounded"].with_suffix(".txt")))
+        r.update(take=c["take"].stem, max_foot_move_cm=args.max_foot_move * 100, ik_fail_frames=ik_failures(c["grounded"].with_suffix(".txt")),
+                 hand_fwd_human_m=human_wrist_forward(c["smplx"], args.model_dir))
         r.update(checker.check(c["grounded"]))
         rows.append(r)
     flag(rows)

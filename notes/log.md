@@ -465,12 +465,45 @@
 - Only 5 takes have audio downloaded; fine for training, needed only for dubbed videos
 - Process: a `pkill -f` pattern matched its own shell and killed the command before it ran; kill by PID
 
+## 2026-10-16: left arm held back in BEAT2 clips: GMR IK start, fixed → beat2-10s-*:v1
+
+**Symptom:** in visualize-motions many BEAT2 clips (e.g. sophie_0_15_15_t53-63, lawrence_0_1_1_t9-19) had the K1's left arm held straight back, never the right
+
+**Not a mapping bug** (checked every link)
+- GMR `K1_serial.xml` vs booster `k1.xml`: every head/arm joint's axis (local and in the trunk frame), range, parent-body pose, and zero position match; renamed `ALeft_Shoulder_Pitch` = `Left_Shoulder_Pitch`
+- GMR loads `K1_serial.xml` and its .pkl columns follow its joint order, which ground_clip assumes; booster's xml joint order is the same, so upload-motion's by-position write is right
+- FK on real frames: hand positions in the trunk frame identical for raw .pkl on GMR's model, raw .pkl on booster's model, and grounded .pkl
+
+**Cause: GMR's IK start.** GMR's raw output already had the arm back (K1 left hand −0.17 / −0.11 m behind the trunk; human left wrist +0.20 / +0.26 m in front). GMR starts the IK from the zero pose (a T-pose); on frame 0 the left arm can settle swung back (Sophie: left shoulder pitch at its +70° limit) and the warm start keeps it there for the whole clip. A fresh solve at frame 150 gave the correct arm. Starting from the K1's arms-down standing pose fixed it: GMR IK error 7.16 → 1.25 (Sophie), 7.05 → 1.76 (Lawrence); control clip identical
+- Prevalence in v0: 20/152 clips had the K1 left hand behind while the human's was in front (right: 2). 9 were already excluded as "upper-arm twist", **11 were in the v0 artifacts**
+- Why left and not right: not pinned down (IK config, ranges and arm frames are all left/right symmetric). The fix doesn't depend on it
+
+**Fix**
+- `tools/gmr_retarget.py`: seed the IK with the arms of booster's `HOME_KEYFRAME` (shoulder roll ±1.4, elbow ±0.4) before the frame-0 warm-up
+- `tools/beat2_batch.py`: new severe QC flag "arm behind body (human's in front)": mean K1 hand > 5 cm behind the trunk while the human wrist is > 5 cm in front of the pelvis
+- Re-ran the batch with `--force` (~17 min) and re-uploaded: **`beat2-10s-train:v1`** (106 clips, 17.7 min) and **`beat2-10s-heldout:v1`** (44 clips, 7.3 min)
+
+| QC | v0 | v1 |
+|---|---|---|
+| Flagged | 62 | 43 |
+| Severe (excluded) | 12 | 2 (wayne_0_10_10_t49-59 right arm behind; lawrence_0_4_4_t1-11 trunk-drop outlier) |
+| Upper-arm twist at limit / head at limit / ground IK failures | 9 / 9 / 2 clips | 0 / 0 / 0 |
+| Left arm behind body | 20 | 0 |
+
+**Sanity clips unaffected:** waves 000113/000508/001104 and talk_scott_1_1_t34-44 re-retargeted with the fix are identical to the originals after frame 10 (0.00 cm hands, ≤ 0.01° joints; first frames differ ≤ 1.5 cm). Their artifacts and the policies trained on them (me9exatd, pqh0whw0, e2p0f89y, z17z0n1q, 8ku1opzv) stay valid
+
+**Takeaways**
+- Most of v0's twist / head-limit flags were the same IK problem, not the speakers' poses
+- GMR's K1 config tracks the human **elbow** with the K1's hand (`left_hand_link` ↔ `left_elbow`) and the shoulder with `Left_Arm_3`: the K1 arm copies the human upper arm, the forearm is ignored. For co-speech gestures (forearm/hand in front, elbow at the side) this loses much of the gesture. Worth an IK-config experiment (hand ↔ scaled wrist) later
+- Any training run on `beat2-10s-train:v0` should be redone on `:v1`
+
 ## Next
-- First general-tracker run (club GPU): `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v0 --env.scene.num-envs 4096`; 16 min of motion vs 6.7 s in the sanity run, so expect many more iterations (watch per-clip fail_rate / sample_share)
-- Eval it on `beat2-10s-heldout:v0` (`--registry-name`), per speaker (Ayana hard, Nidal easy), and on the train set for the generalization gap
+- First general-tracker run (club GPU): `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v1 --env.scene.num-envs 4096`; 16 min of motion vs 6.7 s in the sanity run, so expect many more iterations (watch per-clip fail_rate / sample_share)
+- Eval it on `beat2-10s-heldout:v1` (`--registry-name`), per speaker (Ayana hard, Nidal easy), and on the train set for the generalization gap
 - `play` `z17z0n1q` + record the video, dub in `scott_1_1_t34-44.wav`, check sync (Slice 0 step G)
 - The 20 s stepping window (`--max-foot-move 0.15`)
 - Optionally download more BEAT2 speakers and rerun `--find-still`
 - Tell the lead about the milestone 1 change; update `proposal.md` once agreed
 - `play` + record videos of me9exatd and pqh0whw0 for the lead
+- Try GMR's K1 IK config with the K1 hand tracking the (scaled) human wrist instead of the elbow, so forearm gestures survive
 - Still open with lead: K1 ankle model (standard vs `-Parallel`)
