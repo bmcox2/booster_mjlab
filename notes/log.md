@@ -497,10 +497,59 @@
 - GMR's K1 config tracks the human **elbow** with the K1's hand (`left_hand_link` ↔ `left_elbow`) and the shoulder with `Left_Arm_3`: the K1 arm copies the human upper arm, the forearm is ignored. For co-speech gestures (forearm/hand in front, elbow at the side) this loses much of the gesture. Worth an IK-config experiment (hand ↔ scaled wrist) later
 - Any training run on `beat2-10s-train:v0` should be redone on `:v1`
 
+## 2026-10-17: first general tracker (0lg80c7d) stuck on one bad clip → beat2-10s-*:v2
+
+**Run**
+- Club GPU (`sigrobotics`). WandB run `0lg80c7d` (`beat2-general`), `beat2-10s-train:v1` (106 clips, 17.7 min), 4096 envs, 30,000 iterations, 6.5 h (~158k env-steps/s)
+- (`xzaq29gw` on `:v0` was killed at it 14)
+
+**Training charts** (raw, averaged ±200 it)
+
+| Iteration | 250 | 1k | 2.5k | 10k | 20k | 30k |
+|---|---|---|---|---|---|---|
+| mean_reward | 36.0 | 54.4 | 56.6 | 56.0 | 56.6 | 55.0 |
+| error_body_pos (m) | 0.058 | 0.023 | 0.019 | 0.020 | 0.021 | 0.020 |
+| error_joint_pos | 1.85 | 0.56 | 0.46 | 0.46 | 0.45 | 0.47 |
+| `ee_body_pos` terminations | 3.2 | 0.55 | 0.38 | 0.41 | 0.44 | 0.31 |
+
+- Flat from ~2.5k it: 27k iterations added nothing. mean_std 0.48 → ~0.35 (single clip: 0.16); value loss 0.04–0.07; small wobble in the last few hundred it (value loss 0.17, action_rate −0.71)
+- **`sampling_top1_prob` 0.6–0.75 the whole run**: `wayne_0_9_9_t12-22` got 62% of starts by 500 it and 70–77% after; the only clip with fail_rate > 0 (0.07). Other 105 clips: median sample_share 0.002 (uniform 0.0094) → each trained ~4–5× less than it should
+- Verdict: **stuck**. Not checked in `play`
+
+**Eval** (model_29999, club GPU, `--device cuda:0`)
+- `uv run eval-tracking --wandb-run-path .../0lg80c7d --registry-name .../beat2-10s-heldout:v1 --device cuda:0` (+ `--push`), and on the train set (no `--registry-name`)
+
+| Set | Pass | Hand err (mean of clip means) |
+|---|---|---|
+| Held-out | 43/44 clips, 2150/2200 rollouts | 6.7 cm (Nidal 5.8, Ayana 8.7) |
+| Held-out + pushes | 43/44 (same) | same within ~0.3 cm |
+| Train | 103/106 clips, 5295/5300 | 5.8 cm (Sophie 4.2, Wayne 4.5, Lawrence 6.5, Miranda 7.3, Solomon 7.7, Scott 9.7) |
+
+- Only held-out failure: `nidal_0_3_3_t0-10`, 0/50, `ee_body_pos` at 0.44–0.52 s. 5 train failures, all at t = 0.10 s (start jitter)
+- Same clip, specialist vs generalist: `scott_0_1_1_t34-44` hands 2.2 cm (`z17z0n1q`) vs 12.7 cm here. The over-sampled `wayne_0_9_9_t12-22` is the best clip (2.3 cm mean, 25 cm at its jump)
+- Foot tilt on floor 10–38° on many clips (train too); height within ~1.5 cm; drift 2–4 cm (≤ 13 cm worst)
+- Train ≈ held-out → **underfitting, not memorizing**
+
+**Problems & fixes**
+- **GMR joint jumps.** `nidal_0_3_3_t0-10`: BEAT2 motion smooth (≤ 0.16 rad/frame) but GMR holds the K1 left arm in a wrong pose (hand 0.59–0.68 m high) for 0.7 s, then `Left_Elbow_Pitch` snaps 1.57 rad in one frame (hand moves 42 cm in 1/50 s). Max per-frame joint step over all 152 clips: 4 glitches at 0.92–1.57 rad (all `*_Elbow_Pitch`, the upper-arm twist; wayne's is a one-frame spike 0.20 → −0.72 → 0.19), everything else ≤ 0.52 rad (median 0.13). New severe QC flag `joint jump` (> 0.6 rad per 1/30 s frame) in `tools/beat2_batch.py`. Not a motor limit (arm R14 motors: 33.5 rad/s ≈ 1.1 rad/frame), just the gap in the data
+- **Adaptive sampling takeover.** A bin's weight = recent failures per step (scales with num_envs) + `adaptive_uniform_ratio`/bins; mjlab's 0.1 is too weak with 4096 envs and a never-trackable clip. K1 `env_cfgs.py`: `motion_cmd.adaptive_uniform_ratio = 1.0`. Written up in `multi-clip.md`
+- Re-ran `uv run python tools/beat2_batch.py --train 2_scott 1_wayne 3_solomon 4_lawrence 7_sophie 9_miranda --heldout 11_nidal 21_ayana --exclude severe` (cached; QC + combine only, ~11 min) → **`beat2-10s-train:v2`** (103 clips, 17.2 min) and **`beat2-10s-heldout:v2`** (43 clips, 7.2 min). Excluded: the 4 jump clips + `wayne_0_10_10_t49-59`, `lawrence_0_4_4_t1-11` (as in v1)
+- **`eval-tracking` crashed with > 4096 rollouts** ("Inplace update to inference tensor outside InferenceMode") on the second batch's `env.reset()`. Fixed: reset under `torch.inference_mode()` too. Workaround on old code: `--max-envs 5300`
+- Laptop dGPU dropped off the PCI bus again (`lspci` shows only the Intel iGPU) → evals ran on the club GPU
+- Club GPU WandB: `source ~/bmcox2/.wandb_env` (shared `booster` account; no `wandb login`)
+
+**Takeaways**
+- One bad clip can wreck a multi-clip run through adaptive sampling. Watch `sampling_top1_prob` early; if it's far above 1/(bins), look at that clip's `sample_share` and its reference
+- The general tracker generalizes (held-out ≈ train, pushes don't matter) but is ~3× worse than single-clip policies; first see how much fair sampling recovers before changing the network or observations (no future frames in the obs; 512-256-128)
+
 ## Next
-- First general-tracker run (club GPU): `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v1 --env.scene.num-envs 4096`; 16 min of motion vs 6.7 s in the sanity run, so expect many more iterations (watch per-clip fail_rate / sample_share)
-- Eval it on `beat2-10s-heldout:v1` (`--registry-name`), per speaker (Ayana hard, Nidal easy), and on the train set for the generalization gap
+- Retrain on v2 (club GPU, `git pull` first for the sampler change): `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v2 --env.scene.num-envs 4096 --agent.max-iterations 10000`; check `sampling_top1_prob` stays < ~0.05 and `error_body_pos` keeps falling past 0.019
+- Eval it on `beat2-10s-train:v2` and `beat2-10s-heldout:v2` (+ `--push`); compare per speaker with `0lg80c7d` (train 5.8 / held-out 6.7 cm)
+- If still well above single-clip (~2 cm): try future reference frames in the obs and/or a bigger network
+- Foot tilt 10–38° on many clips: look in `play`, then consider a foot-flatness reward
+- `play` `0lg80c7d` on `scott_0_1_1_t34-44` and a Lawrence clip (arms, foot roll)
 - `play` `z17z0n1q` + record the video, dub in `scott_1_1_t34-44.wav`, check sync (Slice 0 step G)
+- Why GMR's IK flips the upper-arm twist (`*_Elbow_Pitch`); fixing it would recover the 4 dropped clips
 - The 20 s stepping window (`--max-foot-move 0.15`)
 - Optionally download more BEAT2 speakers and rerun `--find-still`
 - Tell the lead about the milestone 1 change; update `proposal.md` once agreed
