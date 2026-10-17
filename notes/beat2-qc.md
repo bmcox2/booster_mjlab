@@ -1,25 +1,25 @@
 # BEAT2 Clip QC
 
-Generated 2026-10-16 by `tools/beat2_batch.py` (10 s windows, top 2 per take, ankles within 10 cm). One row per clip; rerun the script to refresh.
+Generated 2026-10-17 by `tools/beat2_batch.py` (10 s windows, top 2 per take, ankles within 10 cm). One row per clip; rerun the script to refresh.
 
-- **Clips:** 152 (108 train, 44 held-out), **43 flagged**, 2 severe (**bold**); 2 left out of the artifacts (`--exclude severe`)
+- **Clips:** 152 (108 train, 44 held-out), **43 flagged**, 6 severe (**bold**); 6 left out of the artifacts (`--exclude severe`)
 - **Train speakers:** 2_scott (3 clips), 1_wayne (25 clips), 3_solomon (14 clips), 4_lawrence (24 clips), 7_sophie (28 clips), 9_miranda (14 clips)
 - **Held-out speakers:** 11_nidal (30 clips), 21_ayana (14 clips)
 - **Takes with fewer windows:** 2_scott_0_10_10 (only 1 still window(s) of 46); 2_scott_0_11_11 (only 0 still window(s) of 38); 2_scott_0_12_12 (only 0 still window(s) of 81); 2_scott_0_13_13 (only 0 still window(s) of 63); 2_scott_0_14_14 (only 0 still window(s) of 76); 2_scott_0_15_15 (only 0 still window(s) of 82); 2_scott_0_1_1 (only 1 still window(s) of 54); 2_scott_0_2_2 (only 0 still window(s) of 52); 2_scott_0_3_3 (only 0 still window(s) of 58); 2_scott_0_4_4 (only 0 still window(s) of 57); 2_scott_0_5_5 (only 1 still window(s) of 67); 2_scott_0_6_6 (only 0 still window(s) of 73); 2_scott_0_7_7 (only 0 still window(s) of 60); 2_scott_0_8_8 (only 0 still window(s) of 68); 2_scott_0_9_9 (only 0 still window(s) of 46); 1_wayne_0_1_1 (only 0 still window(s) of 59); 1_wayne_0_2_2 (only 1 still window(s) of 63); 1_wayne_0_3_3 (only 1 still window(s) of 63); 1_wayne_0_4_4 (only 1 still window(s) of 62); 3_solomon_0_10_10 (only 1 still window(s) of 56); 3_solomon_0_11_11 (only 0 still window(s) of 65); 3_solomon_0_12_12 (only 0 still window(s) of 75); 3_solomon_0_13_13 (only 1 still window(s) of 69); 3_solomon_0_14_14 (only 0 still window(s) of 73); 3_solomon_0_2_2 (only 0 still window(s) of 85); 3_solomon_0_3_3 (only 0 still window(s) of 68); 3_solomon_0_4_4 (only 0 still window(s) of 73); 3_solomon_0_9_9 (only 0 still window(s) of 63); 4_lawrence_0_10_10 (only 1 still window(s) of 55); 4_lawrence_0_14_14 (only 1 still window(s) of 82); 4_lawrence_0_3_3 (only 1 still window(s) of 75); 4_lawrence_0_5_5 (only 1 still window(s) of 89); 4_lawrence_0_9_9 (only 0 still window(s) of 63); 7_sophie_0_2_2 (only 1 still window(s) of 53); 7_sophie_0_3_3 (only 1 still window(s) of 52)
-- **train artifact:** `bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v1`
-- **heldout artifact:** `bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-heldout:v1`
+- **train artifact:** `bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-train:v2`
+- **heldout artifact:** `bmcox2-university-of-illinois-urbana-champaign/motion_upload/beat2-10s-heldout:v2`
 
 ## Per speaker
 
 | split | speaker | takes | clips | flagged | severe | head at limit | shoulder at limit | upper-arm twist | other |
 |---|---|---|---|---|---|---|---|---|---|
 | train | 2_scott | 15 | 3 | 0 (0%) | 0 (0%) | 0 (0%) | 0 (0%) | 0 (0%) | 0 (0%) |
-| train | 1_wayne | 15 | 25 | 8 (32%) | 1 (4%) | 0 (0%) | 0 (0%) | 0 (0%) | 8 (32%) |
-| train | 3_solomon | 15 | 14 | 1 (7%) | 0 (0%) | 0 (0%) | 1 (7%) | 0 (0%) | 0 (0%) |
-| train | 4_lawrence | 15 | 24 | 4 (17%) | 1 (4%) | 0 (0%) | 3 (12%) | 0 (0%) | 1 (4%) |
+| train | 1_wayne | 15 | 25 | 8 (32%) | 2 (8%) | 0 (0%) | 0 (0%) | 0 (0%) | 8 (32%) |
+| train | 3_solomon | 15 | 14 | 1 (7%) | 1 (7%) | 0 (0%) | 1 (7%) | 0 (0%) | 1 (7%) |
+| train | 4_lawrence | 15 | 24 | 4 (17%) | 2 (8%) | 0 (0%) | 3 (12%) | 0 (0%) | 2 (8%) |
 | train | 7_sophie | 15 | 28 | 10 (36%) | 0 (0%) | 0 (0%) | 0 (0%) | 0 (0%) | 10 (36%) |
 | train | 9_miranda | 7 | 14 | 1 (7%) | 0 (0%) | 0 (0%) | 0 (0%) | 0 (0%) | 1 (7%) |
-| heldout | 11_nidal | 15 | 30 | 15 (50%) | 0 (0%) | 0 (0%) | 1 (3%) | 0 (0%) | 14 (47%) |
+| heldout | 11_nidal | 15 | 30 | 15 (50%) | 1 (3%) | 0 (0%) | 1 (3%) | 0 (0%) | 15 (50%) |
 | heldout | 21_ayana | 7 | 14 | 4 (29%) | 0 (0%) | 0 (0%) | 2 (14%) | 0 (0%) | 2 (14%) |
 
 ## Columns
@@ -32,7 +32,7 @@ Generated 2026-10-16 by `tools/beat2_batch.py` (10 s windows, top 2 per take, an
 ## Flags
 Fixed: K1 feet > 8 cm, trunk drop > 5 cm, knee > 60°, a joint group at its limit > 5% of frames, K1 hands < 5 cm/s, any ground_clip IK failure. Clips that trained to 50/50 so far: K1 feet ≤ 1.8 cm, trunk ≤ 1.8 cm, knees 14–36°, 0 limit frames, hands 8–16 cm/s.
 Outlier: more than 3.5 robust SDs (median / MAD) from this batch on arms, trunk, or knee (not feet: most clips move ~1 cm with a long tail of normal weight shifts; the fixed limit covers feet).
-**Severe** (dropped by `--exclude severe`): upper-arm twist at its limit on > 50% of frames, any ground_clip IK failure, a trunk-drop outlier, or an arm on the wrong side (K1 hand > 5 cm behind the trunk while the human's wrist is > 5 cm in front). Head or shoulder held at a limit is not severe: the clipped pose is still valid K1 motion.
+**Severe** (dropped by `--exclude severe`): upper-arm twist at its limit on > 50% of frames, any ground_clip IK failure, a trunk-drop outlier, or an arm on the wrong side (K1 hand > 5 cm behind the trunk while the human's wrist is > 5 cm in front), or a joint jump (a joint moving > 0.6 rad in one 1/30 s frame: GMR's IK flipping, the hand reference teleports). Head or shoulder held at a limit is not severe: the clipped pose is still valid K1 motion.
 
 | split | clip | source | feet human / K1 (cm) | arms human / K1 (cm/s) | trunk drop (cm) | knees L / R (deg) | joint limits | flags |
 |---|---|---|---|---|---|---|---|---|
@@ -63,10 +63,10 @@ Outlier: more than 3.5 robust SDs (median / MAD) from this batch on arms, trunk,
 | train | `wayne_0_8_8_t3-13` | 1_wayne_0_8_8 3–13 s | 1.1 / 0.5 | 18 / 7 | 1.1 | 26–33 / 17–28 | 0 | — |
 | train | `wayne_0_8_8_t46-56` | 1_wayne_0_8_8 46–56 s | 0.4 / 0.2 | 14 / 6 | 0.4 | 26–30 / 19–31 | 0 | — |
 | train | `wayne_0_9_9_t48-58` | 1_wayne_0_9_9 48–58 s | 0.5 / 0.3 | 17 / 6 | 0.2 | 27–29 / 17–21 | 0 | — |
-| train | `wayne_0_9_9_t12-22` | 1_wayne_0_9_9 12–22 s | 6.5 / 4.2 | 9 / 5 | 0.9 | 14–34 / 26–34 | 0 | little arm motion |
+| train | `wayne_0_9_9_t12-22` | 1_wayne_0_9_9 12–22 s | 6.5 / 4.2 | 9 / 5 | 0.9 | 14–34 / 26–34 | 0 | little arm motion; **joint jump 0.92 rad (Left_Elbow_Pitch at 3.9 s)** *(excluded)* |
 | train | `solomon_0_10_10_t18-28` | 3_solomon_0_10_10 18–28 s | 5.5 / 2.7 | 40 / 10 | 1.2 | 14–35 / 14–27 | 0 | — |
 | train | `solomon_0_13_13_t3-13` | 3_solomon_0_13_13 3–13 s | 6.1 / 4.3 | 69 / 17 | 1.1 | 15–36 / 15–25 | shoulder 1% | — |
-| train | `solomon_0_15_15_t21-31` | 3_solomon_0_15_15 21–31 s | 8.5 / 6.3 | 62 / 19 | 2.7 | 16–42 / 14–28 | shoulder 18% | shoulder at limit 18% |
+| train | `solomon_0_15_15_t21-31` | 3_solomon_0_15_15 21–31 s | 8.5 / 6.3 | 62 / 19 | 2.7 | 16–42 / 14–28 | shoulder 18% | shoulder at limit 18%; **joint jump 1.26 rad (Right_Elbow_Pitch at 9.6 s)** *(excluded)* |
 | train | `solomon_0_15_15_t43-53` | 3_solomon_0_15_15 43–53 s | 8.0 / 4.8 | 53 / 14 | 1.7 | 14–38 / 16–37 | 0 | — |
 | train | `solomon_0_1_1_t18-28` | 3_solomon_0_1_1 18–28 s | 7.6 / 4.5 | 59 / 16 | 1.2 | 14–35 / 14–28 | 0 | — |
 | train | `solomon_0_1_1_t56-66` | 3_solomon_0_1_1 56–66 s | 9.8 / 5.9 | 29 / 9 | 1.8 | 14–35 / 14–36 | 0 | — |
@@ -83,7 +83,7 @@ Outlier: more than 3.5 robust SDs (median / MAD) from this batch on arms, trunk,
 | train | `lawrence_0_11_11_t57-67` | 4_lawrence_0_11_11 57–67 s | 9.4 / 5.5 | 34 / 9 | 2.7 | 15–37 / 15–37 | 0 | — |
 | train | `lawrence_0_12_12_t12-22` | 4_lawrence_0_12_12 12–22 s | 5.3 / 2.3 | 37 / 14 | 2.3 | 23–35 / 16–33 | 0 | — |
 | train | `lawrence_0_12_12_t26-36` | 4_lawrence_0_12_12 26–36 s | 2.4 / 1.5 | 33 / 12 | 1.5 | 18–36 / 26–39 | shoulder 13% | shoulder at limit 13% |
-| train | `lawrence_0_13_13_t42-52` | 4_lawrence_0_13_13 42–52 s | 9.9 / 4.7 | 38 / 13 | 1.8 | 15–40 / 14–38 | shoulder 50% | shoulder at limit 50% |
+| train | `lawrence_0_13_13_t42-52` | 4_lawrence_0_13_13 42–52 s | 9.9 / 4.7 | 38 / 13 | 1.8 | 15–40 / 14–38 | shoulder 50% | shoulder at limit 50%; **joint jump 1.17 rad (Right_Elbow_Pitch at 8.0 s)** *(excluded)* |
 | train | `lawrence_0_13_13_t21-31` | 4_lawrence_0_13_13 21–31 s | 9.5 / 5.3 | 32 / 13 | 2.5 | 19–36 / 15–35 | 0 | — |
 | train | `lawrence_0_14_14_t7-17` | 4_lawrence_0_14_14 7–17 s | 9.8 / 5.6 | 32 / 12 | 2.0 | 20–35 / 14–24 | 0 | — |
 | train | `lawrence_0_15_15_t65-75` | 4_lawrence_0_15_15 65–75 s | 2.1 / 0.7 | 34 / 11 | 1.9 | 24–39 / 17–25 | 0 | — |
@@ -160,7 +160,7 @@ Outlier: more than 3.5 robust SDs (median / MAD) from this batch on arms, trunk,
 | heldout | `nidal_0_1_1_t14-24` | 11_nidal_0_1_1 14–24 s | 1.2 / 0.4 | 20 / 6 | 0.3 | 16–25 / 18–29 | 0 | — |
 | heldout | `nidal_0_2_2_t51-61` | 11_nidal_0_2_2 51–61 s | 0.8 / 0.4 | 19 / 7 | 0.2 | 27–31 / 15–20 | 0 | — |
 | heldout | `nidal_0_2_2_t63-73` | 11_nidal_0_2_2 63–73 s | 0.9 / 0.5 | 19 / 7 | 0.2 | 32–35 / 15–24 | 0 | — |
-| heldout | `nidal_0_3_3_t0-10` | 11_nidal_0_3_3 0–10 s | 8.5 / 4.8 | 18 / 7 | 0.8 | 26–36 / 15–31 | shoulder 8% | shoulder at limit 8% |
+| heldout | `nidal_0_3_3_t0-10` | 11_nidal_0_3_3 0–10 s | 8.5 / 4.8 | 18 / 7 | 0.8 | 26–36 / 15–31 | shoulder 8% | shoulder at limit 8%; **joint jump 1.57 rad (Left_Elbow_Pitch at 0.8 s)** *(excluded)* |
 | heldout | `nidal_0_3_3_t41-51` | 11_nidal_0_3_3 41–51 s | 1.1 / 0.6 | 17 / 5 | 0.3 | 23–27 / 15–25 | 0 | little arm motion |
 | heldout | `nidal_0_4_4_t10-20` | 11_nidal_0_4_4 10–20 s | 0.7 / 0.3 | 18 / 5 | 0.2 | 28–32 / 17–23 | 0 | — |
 | heldout | `nidal_0_4_4_t0-10` | 11_nidal_0_4_4 0–10 s | 3.2 / 2.2 | 16 / 5 | 0.7 | 25–35 / 15–27 | 0 | little arm motion |

@@ -66,6 +66,15 @@ its length. A 60 s BEAT2 take gets ~20× the starts of a 3 s wave. Adaptive samp
 toward clips that fail. If short gestures get neglected when mixed with long talking clips, this is
 the knob to change (e.g. weight clips equally).
 
+**One bad clip can take over (run `0lg80c7d`).** A bin's weight is its recent failures *per step*
+(more envs → more failures) plus a uniform floor, `adaptive_uniform_ratio / bins` (total floor = the
+ratio). With mjlab's 0.1 and 4096 envs, one clip whose reference teleports (a GMR IK jump, never
+trackable) got 70–77% of all starts for 30k iterations; the other 105 clips got ~0.2% each instead of
+~0.9%, and the run plateaued at ~2.5k iterations. Fixes: the `joint jump` severe QC flag in
+`tools/beat2_batch.py` drops such clips, and the K1 config sets `adaptive_uniform_ratio = 1.0`.
+**Watch `Metrics/motion/sampling_top1_prob`**: if it sits far above 1/(number of bins), check which
+clip's `sample_share` is high and look at that clip.
+
 ## Diff from mjlab's `MotionCommand`
 mjlab stays pinned and unedited; `MultiMotionCommand` subclasses it.
 

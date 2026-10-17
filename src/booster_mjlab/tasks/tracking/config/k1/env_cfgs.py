@@ -111,6 +111,10 @@ def booster_k1_flat_tracking_env_cfg(
     motion_cmd = cfg.commands["motion"]
     assert isinstance(motion_cmd, MotionCommandCfg)
     motion_cmd.anchor_body_name = "Trunk"
+    # Adaptive sampling weights each ~1 s bin by its recent failures per step (which grow with num_envs)
+    # plus this uniform floor. mjlab's 0.1 let one always-failing clip take 70-77% of all starts in the
+    # 106-clip run 0lg80c7d (4096 envs), starving the rest. 1.0 keeps most starts spread over every clip.
+    motion_cmd.adaptive_uniform_ratio = 1.0
     motion_cmd.body_names = (
         "Trunk",
         "Head_1",

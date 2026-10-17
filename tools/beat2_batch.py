@@ -72,6 +72,12 @@ SEVERE_TWIST_FRAC = 0.5  # upper-arm twist at its limit on more than this share 
 # Arm on the wrong side: the K1's hand is on average this far behind the trunk while the human's wrist is
 # this far in front of the pelvis (GMR's IK stuck with the arm swung back). Severe: the reference is wrong.
 ARM_BEHIND_M, HUMAN_FRONT_M = 0.05, 0.05
+# Joint jump: a joint moves more than this in one 1/30 s frame. GMR's IK flipping branch (e.g. the
+# upper-arm twist snapping 90 deg), not the speaker: the hand reference teleports, no policy can track
+# it, and adaptive sampling then pours most training starts into that bin (run 0lg80c7d: 70-77% of
+# starts on wayne_0_9_9_t12-22). Among 152 clips the 4 glitches were 0.92-1.57 rad; real fast motion
+# (elbow bends, quick twists) stayed <= 0.52 rad. Severe.
+JOINT_JUMP_RAD = 0.6
 # Feet are left out: K1 foot motion is ~1 cm for most clips with a long tail of weight shifts (4-7 cm,
 # within what --max-foot-move allows), so a batch-relative test flags normal speakers. The fixed
 # feet_k1_cm limit still applies.
@@ -182,6 +188,8 @@ class K1Checker:
             kinds.setdefault(kind, np.zeros(len(dof), bool))
             kinds[kind] |= near[:, j]
         knee = np.degrees(dof[:, self.knees])
+        step = np.abs(np.diff(dof, axis=0))
+        jump_frame, jump_joint = np.unravel_index(step.argmax(), step.shape)
         return {
             "feet_k1_cm": float(np.linalg.norm(feet - np.median(feet, axis=0), axis=-1).max() * 100),
             "arms_k1_cm_s": float(np.linalg.norm(np.diff(hands, axis=0), axis=-1).mean() * fps * 100),
@@ -193,6 +201,8 @@ class K1Checker:
             "limit_frac": float(near.any(axis=1).mean()),
             "limit_kinds": {k: float(v.mean()) for k, v in kinds.items()},
             "limit_joints": {self.joint_names[j]: int(near[:, j].sum()) for j in np.flatnonzero(near.any(axis=0))},
+            "joint_jump_rad": float(step.max()),
+            "joint_jump_at": [self.joint_names[jump_joint], float((jump_frame + 1) / fps)],  # joint, seconds
         }
 
 
@@ -243,6 +253,10 @@ def flag(rows: list[dict]) -> None:
             severe.append(next(x for x in f if x.startswith("upper-arm twist")))
         if r["ik_fail_frames"]:
             severe.append(next(x for x in f if x.startswith("ground IK failed")))
+        if r["joint_jump_rad"] > JOINT_JUMP_RAD:
+            joint, t = r["joint_jump_at"]
+            f.append(f"joint jump {r['joint_jump_rad']:.2f} rad ({joint} at {t:.1f} s)")
+            severe.append(f[-1])
         for side, k1, human in zip(("left", "right"), r["hand_fwd_k1_m"], r["hand_fwd_human_m"]):
             if k1 < -ARM_BEHIND_M and human > HUMAN_FRONT_M:
                 f.append(f"{side} arm behind body (human's in front)")
@@ -331,7 +345,8 @@ def write_qc(rows: list[dict], notes: dict, args, path: Path) -> None:
         "(not feet: most clips move ~1 cm with a long tail of normal weight shifts; the fixed limit covers feet).",
         f"**Severe** (dropped by `--exclude severe`): upper-arm twist at its limit on > {SEVERE_TWIST_FRAC:.0%} of frames, "
         f"any ground_clip IK failure, a trunk-drop outlier, or an arm on the wrong side (K1 hand > {ARM_BEHIND_M * 100:.0f} cm "
-        f"behind the trunk while the human's wrist is > {HUMAN_FRONT_M * 100:.0f} cm in front). Head or shoulder held at a limit is not severe: "
+        f"behind the trunk while the human's wrist is > {HUMAN_FRONT_M * 100:.0f} cm in front), or a joint jump (a joint moving > {JOINT_JUMP_RAD:g} rad "
+        "in one 1/30 s frame: GMR's IK flipping, the hand reference teleports). Head or shoulder held at a limit is not severe: "
         "the clipped pose is still valid K1 motion.",
         "",
         "| split | clip | source | feet human / K1 (cm) | arms human / K1 (cm/s) | trunk drop (cm) | knees L / R (deg) "
