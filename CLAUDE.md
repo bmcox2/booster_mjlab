@@ -60,6 +60,7 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - Hardware: Dell XPS 15, RTX 4070 Laptop 8 GB, Ubuntu 24.04 (dual boot). GPU power capped ~35 W; dGPU has dropped out intermittently and the laptop has overheated before. Check `nvidia-smi` before runs; stop if GPU sustains >~87 °C. Prefer the club GPU for long runs.
 - 4096 envs fits in 8 GB (~3k iterations ≈ 2.5 h for the velocity task).
 - SSH: `ssh booster@10.193.169.55` (private campus IP, so it only works on the campus network or VPN).
+- Club GPU WandB: shared `booster` account, so no `wandb login`. Run `source ~/bmcox2/.wandb_env` in each new shell before `uv run train` / `eval-tracking` / `play`.
 
 ## Status
 - 2026-10-13: setup done; velocity baseline trained (WandB run `2wagxxko`, healthy).

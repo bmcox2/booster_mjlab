@@ -180,8 +180,11 @@ def run_batch(env, policy, cmd: MultiMotionCommand, batch: list[int], ctx: dict)
     slot = torch.arange(num_envs, device=dev) // n
     valid = slot < len(batch)
     assign = torch.tensor(batch, device=dev)[torch.where(valid, slot, 0)]
-    cmd.clip_ids[:] = assign
-    obs, _ = env.reset()  # play mode = "start" sampling: every robot at frame 0 of its own clip
+    # Reset under inference_mode too: the previous batch's steps made env buffers (e.g. the actuator
+    # delay buffer) inference tensors, which can't be updated in place outside it.
+    with torch.inference_mode():
+        cmd.clip_ids[:] = assign
+        obs, _ = env.reset()  # play mode = "start" sampling: every robot at frame 0 of its own clip
 
     # Steps until each robot reaches its clip's last frame. One more step and it would move on to
     # the next clip (a teleport), so each robot stops counting there.
