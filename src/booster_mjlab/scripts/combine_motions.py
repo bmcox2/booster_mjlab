@@ -25,6 +25,7 @@ import multiprocessing
 import os
 import re
 import tempfile
+import zipfile
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,14 +129,23 @@ def check_compatible(clips: list[Clip]) -> None:
 
 
 def combine(clips: list[Clip], out: Path) -> None:
-    np.savez(
-        out,
-        fps=np.array([clips[0].fps], dtype=np.float32),
-        **{k: np.concatenate([c.frames[k] for c in clips], axis=0) for k in FRAME_KEYS},
-        clip_lengths=np.array([c.num_frames for c in clips], dtype=np.int64),
-        clip_names=np.array([c.name for c in clips]),
-        clip_sources=np.array([c.source for c in clips]),
-    )
+    """Write the combined .npz (np.savez's layout), one array at a time.
+
+    np.savez needs every concatenated array in memory at once, on top of the clips: ~2x the data,
+    ~13 GB for a 25 h BEAT2 file. Concatenating and writing one key at a time keeps ~1.3x.
+    """
+
+    def put(zf: zipfile.ZipFile, key: str, arr: np.ndarray) -> None:
+        with zf.open(f"{key}.npy", "w", force_zip64=True) as f:
+            np.lib.format.write_array(f, np.asanyarray(arr), allow_pickle=False)
+
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED, allowZip64=True) as zf:
+        put(zf, "fps", np.array([clips[0].fps], dtype=np.float32))
+        for k in FRAME_KEYS:
+            put(zf, k, np.concatenate([c.frames[k] for c in clips], axis=0))
+        put(zf, "clip_lengths", np.array([c.num_frames for c in clips], dtype=np.int64))
+        put(zf, "clip_names", np.array([c.name for c in clips]))
+        put(zf, "clip_sources", np.array([c.source for c in clips]))
 
 
 def upload(cfg: Config, clips: list[Clip], motion_path: Path) -> str:
@@ -191,11 +201,13 @@ def main() -> None:
     print(f"     {'total':<28} {total:>7} {total / clips[0].fps:>8.2f}")
 
     with tempfile.TemporaryDirectory() as tmp:
-        motion_path = Path(tmp) / "motion.npz"
+        if cfg.output is not None:  # written in place: no temp copy (a 25 h file is ~7 GB)
+            cfg.output.parent.mkdir(parents=True, exist_ok=True)
+            motion_path = cfg.output
+        else:
+            motion_path = Path(tmp) / "motion.npz"
         combine(clips, motion_path)
         if cfg.output is not None:
-            cfg.output.parent.mkdir(parents=True, exist_ok=True)
-            cfg.output.write_bytes(motion_path.read_bytes())
             print(f"[out] {cfg.output}")
         if cfg.upload:
             print(f"[upload] Uploaded artifact: {upload(cfg, clips, motion_path)}")

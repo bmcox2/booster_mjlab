@@ -1,24 +1,27 @@
-# Full BEAT2 tracker dataset (plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan", 2026-10-18).
+# Full BEAT2 tracker dataset (plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan", 2026-10-18;
+# decisions: notes/log.md 2026-10-18).
 #
-#   uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml --stages segment   # phase 1: human side
+#   uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml --stages segment   # human side only
 #   uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml                    # everything, then upload
 #
 # Paths starting with ~ are expanded; relative paths are relative to the repo.
 
-name = "beat2-full"                                  # artifacts: <name>-<set>, e.g. beat2-full-train
+name = "beat2-full-torso"                            # artifacts: <name>-<set>, e.g. beat2-full-torso-train-a
 beat2_dir = "~/robotics/data/BEAT2/beat_english_v2.0.0"
-out_dir = "~/robotics/data/beat2_full"               # per-clip cache; one folder per spec
-ik_config = ""                                       # GMR K1 IK config (phase 2: the v3 config). "" = GMR's default
+out_dir = "~/robotics/data/beat2_full_torso"         # per-clip cache; one folder per spec + IK config
+# GMR K1 IK config. Torso config (Trunk <- spine1) until the v3 config exists; then set it here,
+# use a new out_dir and name, and rerun.
+ik_config = "tools/ik_configs/smplx_to_k1_torso.json"
 segments_report = "notes/beat2-full-segments.md"
 qc_report = "notes/beat2-full-qc.md"
 
 [speakers]
-# Held out entirely: the plan's two 4-hour speakers + one man and one woman from the ~1-hour speakers.
-# 20_li (M) and 27_yingqing (F) gesture like the training median (arms 21 / 24 cm/s vs 22) and shift
-# their feet like it (13-20% of time lost); 5_stewart / 10_kieks were the other candidates (most eval
-# takes) but are calm (15 cm/s, still feet) like Nidal, which would make the held-out test easy.
+# Held out entirely (6). Nidal and Ayana (4-hour speakers, per the plan); 20_li (M) and 27_yingqing (F)
+# gesture like the training median (arms 21 / 24 cm/s vs 22) and shift their feet like it; 5_stewart (M)
+# and 10_kieks (F), the only ~1-hour native speakers, are calm (15 cm/s) but nearly free to hold out
+# (7 train takes each, 15 test + 8 val). Read held-out results per speaker.
 # Genders from the BEAT paper's speaker table (arXiv 2203.05297, Table 9).
-heldout = ["11_nidal", "21_ayana", "20_li", "27_yingqing"]
+heldout = ["11_nidal", "21_ayana", "20_li", "27_yingqing", "5_stewart", "10_kieks"]
 train = "rest"                                       # every other speaker in train_test_split.csv (or a list)
 skip = []                                            # speakers left out of both groups
 
@@ -30,38 +33,44 @@ max_s = 20.0
 shift_pad_s = 2.0
 move_speed = 0.10
 
-# One combined artifact per set. speakers: "train" or "heldout"; takes: official split types
-# (train / val / test / additional); tiers: "A" (still) and/or "B" (foot shifts, names end in _shift).
-# Tier B goes into training only once its foot checks pass (plan, decision 7).
-[sets.train]
+# One combined file per set. speakers: "train" or "heldout"; takes: official split types
+# (train / val / test / additional = the 10-min session-1 conversations); tiers: "A" (still) and/or
+# "B" (foot shifts, names end in _shift). Training sets may only use train / additional takes.
+# Comparison runs: train-a alone, and train-a + train-b (combine-motions the two artifacts).
+[sets.train-a]
 speakers = "train"
-takes = ["train"]
+takes = ["train", "additional"]
 tiers = ["A"]
 
-[sets.train-shift]
+[sets.train-b]
 speakers = "train"
-takes = ["train"]
+takes = ["train", "additional"]
 tiers = ["B"]
 
 [sets.val]                                           # picks the checkpoint
 speakers = "train"
 takes = ["val"]
-tiers = ["A"]
+tiers = ["A", "B"]
 
 [sets.heldout-val]
 speakers = "heldout"
 takes = ["val"]
-tiers = ["A"]
+tiers = ["A", "B"]
 
 [sets.test]                                          # scored once, at the end
 speakers = "train"
 takes = ["test"]
-tiers = ["A"]
+tiers = ["A", "B"]
 
 [sets.heldout-test]
 speakers = "heldout"
 takes = ["test"]
-tiers = ["A"]
+tiers = ["A", "B"]
+
+[sets.heldout-conv]                                  # unseen people in conversation (session 1)
+speakers = "heldout"
+takes = ["additional"]
+tiers = ["A", "B"]
 
 [qc]                                                 # Gate 1 limits; defaults and meaning in tools/clip_qc.py
 exclude = "severe"                                   # none / severe / flagged

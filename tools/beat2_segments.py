@@ -328,15 +328,26 @@ def write_report(spec: dict, takes: list[dict], missing: list[str], path: Path) 
             if rows:
                 lines.append(line(f"{group} / {typ}", total(rows)))
 
-    # training-set balance: each speaker's share of Tier A training minutes
-    train_rows = {k[0]: r for k, r in tab.items() if r["group"] == "train" and k[1] == "train"}
-    a_total = sum(r["A_min"] for r in train_rows.values()) or 1
-    lines += ["", "## Training balance (Tier A, `train` takes)", "",
-              "| speaker | A min | share |", "|---|---|---|"]
-    for spk, r in sorted(train_rows.items(), key=lambda kv: -kv[1]["A_min"]):
-        share = r["A_min"] / a_total
-        lines.append(f"| {spk} | {r['A_min']:.1f} | {share:.1%}{' **> 15%**' if share > 0.15 else ''} |")
-    lines.append(f"| **total** | {a_total:.1f} ({a_total / 60:.2f} h) | |")
+    # training-set balance: each speaker's share of Tier A minutes over every split type a training set uses
+    train_types = sorted({t for s in spec["sets"].values() if s["speakers"] == "train"
+                          and set(s["takes"]) <= {"train", "additional"} for t in s["takes"]})
+    per_spk = defaultdict(lambda: defaultdict(float))
+    for (spk, typ), r in tab.items():
+        if r["group"] == "train" and typ in train_types:
+            per_spk[spk][typ] += r["A_min"]
+            per_spk[spk]["A"] += r["A_min"]
+            per_spk[spk]["B"] += r["B_min"]
+    a_total = sum(v["A"] for v in per_spk.values()) or 1
+    b_total = sum(v["B"] for v in per_spk.values())
+    lines += ["", f"## Training balance (Tier A, {' + '.join(f'`{t}`' for t in train_types)} takes)", "",
+              "| speaker | " + " | ".join(f"A min ({t})" for t in train_types) + " | A min | share | B min |",
+              "|---|" + "---|" * (len(train_types) + 3)]
+    for spk, v in sorted(per_spk.items(), key=lambda kv: -kv[1]["A"]):
+        share = v["A"] / a_total
+        lines.append(f"| {spk} | " + " | ".join(f"{v[t]:.1f}" for t in train_types)
+                     + f" | {v['A']:.1f} | {share:.1%}{' **> 15%**' if share > 0.15 else ''} | {v['B']:.1f} |")
+    lines.append(f"| **total** | " + " | ".join(f"{sum(v[t] for v in per_spk.values()):.1f}" for t in train_types)
+                 + f" | {a_total:.1f} ({a_total / 60:.2f} h) | | {b_total:.1f} ({b_total / 60:.2f} h) |")
 
     # clip-length and foot-movement distributions, per tier
     lines += ["", "## Clips", "", "| tier | clips | length s (min / median / max) | feet cm (median / p95 / max) | "
