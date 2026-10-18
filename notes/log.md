@@ -590,8 +590,36 @@
 - A general BEAT2 tracker that passes 142/146 clips at 50/50 (the rest 47–49/50) with ~2.5–3 cm hands; Ayana-style expressive motion is the hardest
 - Watch mean_std late in runs: a rise from its plateau came before both dips
 
+## 2026-10-17: Slice 0 video with the general policy; K1 leans back → torso IK config prototype
+
+**Video** (Slice 0 step G)
+- `play` gained headless-video settings (`src/booster_mjlab/scripts/play.py`, commit `0db3089`): camera 1.8 m / 45° fovy / −8° (mjlab's 2.8 m left the K1 at 1/3 of the frame), 1920×1080, x264 qp 18 (~7 Mbit/s vs ~0.5), `--hide-overlays` (no reference ghost / foot-height rays); `--video-*` flags override
+- `uv run play Mjlab-Tracking-Flat-Booster-K1 --wandb-run-path .../s5cdzms7 --wandb-checkpoint-name model_8500.pt --registry-name .../talk_scott_1_1_t34-44-tracking:v0 --num-envs 1 --video True --video-length 500 --hide-overlays` → `logs/rsl_rl/k1_tracking/wandb_checkpoints/s5cdzms7/videos/play/rl-video-step-0.mp4`; audio: `ffmpeg -i video.mp4 -i ~/robotics/data/beat2_batch/smplx/scott_0_1_1_t34-44.wav -c:v copy -c:a aac -shortest out.mp4`
+- Gotchas: `--video True` (not a bare flag); the mp4 is written only after `--video-length` steps, so don't Ctrl-C early (first try: 328/500 frames, 6.6 s)
+- Looks: "not too bad", but lots of arm motion and the K1 leans back
+
+**Why it leans back: GMR's K1 config makes the trunk copy the human pelvis**
+- `smplx_to_k1.json`: `Trunk ← pelvis` (orientation). The K1 has no waist; when Scott rocks back his pelvis tilts back but his spine bends ~8° forward, so his torso stays upright. K1 reference trunk lean = Scott's pelvis tilt to 0.3° (mean −15°, −34…+2°) vs his torso (pelvis→neck) mean −6.5° (−24…+18°)
+- **Correction:** `*_hand_link` starts at the K1 *elbow*, so `hand_link ← elbow` is right, and its orientation target makes the forearm follow the human forearm. Earlier notes ("forearm ignored", "K1 hands 16 cm/s vs human 61") measured the elbow. The forearm *tip* sweeps 60/53 cm vs Scott's wrists ×0.59 49/48 cm (42 vs 36 cm/s): arms are slightly *bigger* than Scott's, scaled (K1 forearm 0.20 m vs ~0.15 m scaled human). The QC "arms K1" column is elbow speed too
+
+**Prototype** (Scott clip, `tools/gmr_retarget.py --ik-config`; massless `*_hand_end` bodies added to a temp copy of GMR's K1 model, GMR files untouched; neutral offsets for bodies without a table-1 task)
+
+| Trunk orientation from | Trunk lean mean [range] | Hand-tip sweep L/R |
+|---|---|---|
+| pelvis (GMR) | −15.2° [−34, +2] | 60 / 53 cm |
+| **spine1** | **−6.0° [−25, +21]** | 59 / 53 |
+| spine2 | +0.2° [−12, +25] | 58 / 54 |
+| spine3 | +4.4° [−11, +31] | 58 / 52 |
+| Scott's torso | −6.5° [−24, +18] | 49 / 48 (×0.59) |
+
+- Wrist position targets on the forearm tips (`*_hand_end ← *_wrist`, weight 10): no change (61 / 54 cm). Dropped
+- spine1 vs pelvis after `ground_clip`: feet 1.8 / 1.8 cm, trunk drop 1.5 / 1.8 cm, no limits, max joint step 0.23 rad both; **CoM over the feet** (mean −0.2 cm vs −1.4 cm behind the feet centre)
+- Saved as `tools/ik_configs/smplx_to_k1_torso.json` (GMR's config with `Trunk ← spine1`, position weight 0: hips/feet place the trunk). `beat2_batch.py --ik-config` passes it through. Without `--ik-config` the output is unchanged (0.0 diff vs the cached v2 clip)
+
 ## Next
-- `play` `s5cdzms7` model_8500 (`--wandb-checkpoint-name model_8500.pt`): arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip; record a talking clip + dub audio (Slice 0 step G, now with the general policy)
+- Rebuild BEAT2 with the torso config → `:v3` (separate `--out-dir`), retrain, eval vs `s5cdzms7`; then re-record the Scott video
+- QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
+- `play` `s5cdzms7` model_8500: arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip
 - Foot tilt (> 10° on most Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
 - The 3 clips that fail at t = 0.1 s in eval (`lawrence_0_12_12_t26-36`, `lawrence_0_13_13_t21-31`, `solomon_0_15_15_t43-53`): look at their first frames
 - More speakers (BEAT2 has more) to shrink the Ayana gap
@@ -599,11 +627,9 @@
 - If hands still well above single-clip: try future reference frames in the obs and/or a bigger network
 - Foot tilt 10–38° on many clips: look in `play`, then consider a foot-flatness reward
 - `play` `0lg80c7d` on `scott_0_1_1_t34-44` and a Lawrence clip (arms, foot roll)
-- `play` `z17z0n1q` + record the video, dub in `scott_1_1_t34-44.wav`, check sync (Slice 0 step G)
 - Why GMR's IK flips the upper-arm twist (`*_Elbow_Pitch`); fixing it would recover the 4 dropped clips
 - The 20 s stepping window (`--max-foot-move 0.15`)
 - Optionally download more BEAT2 speakers and rerun `--find-still`
 - Tell the lead about the milestone 1 change; update `proposal.md` once agreed
 - `play` + record videos of me9exatd and pqh0whw0 for the lead
-- Try GMR's K1 IK config with the K1 hand tracking the (scaled) human wrist instead of the elbow, so forearm gestures survive
 - Still open with lead: K1 ankle model (standard vs `-Parallel`)

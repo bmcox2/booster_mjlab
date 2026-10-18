@@ -129,7 +129,10 @@ def retarget(clips: list[dict], args) -> None:
     if not todo:
         return
     print(f"[gmr] retargeting {len(todo)} clip(s) headless with {GMR_PYTHON}")
-    cmd = [str(GMR_PYTHON), str(TOOLS / "gmr_retarget.py")] + [str(p) for c in todo for p in (c["smplx"], c["k1"])]
+    cmd = [str(GMR_PYTHON), str(TOOLS / "gmr_retarget.py")]
+    if args.ik_config:
+        cmd += ["--ik-config", str(args.ik_config.resolve())]
+    cmd += [str(p) for c in todo for p in (c["smplx"], c["k1"])]
     env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}  # prove it's headless
     subprocess.run(cmd, check=True, env=env)
 
@@ -396,6 +399,9 @@ def main() -> None:
     ap.add_argument("--no-upload", dest="upload", action="store_false", help="write <out-dir>/combined/*.npz instead")
     ap.add_argument("--exclude", choices=("none", "severe", "flagged"), default="none",
                     help="leave clips out of the artifacts: severe flags only, or any flag (all stay in the QC table)")
+    ap.add_argument("--ik-config", type=Path, default=None,
+                    help="custom GMR IK config for the K1 (e.g. tools/ik_configs/smplx_to_k1_torso.json); "
+                         "use a separate --out-dir, since cached clips are not redone when this changes")
     ap.add_argument("--force", action="store_true", help="redo every stage")
     args = ap.parse_args()
 

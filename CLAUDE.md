@@ -38,7 +38,7 @@ Key paths:
 - `tests/test_multi_motion.py`: `uv run --with pytest pytest tests/ -q` (CPU, needs `logs/motions/waves_2clip.npz`).
 - `tools/ground_clip.py`: ground + flatten feet of GMR clips before upload.
 - `tools/beat2_to_gmr.py`: BEAT2 take → GMR input (`--find-still` ranks windows). Runs with GMR's venv or the booster venv.
-- `tools/gmr_retarget.py`: headless GMR retarget (no viewer). Must run with `~/projects/GMR/.venv/bin/python`.
+- `tools/gmr_retarget.py`: headless GMR retarget (no viewer). Must run with `~/projects/GMR/.venv/bin/python`. `--ik-config tools/ik_configs/<cfg>.json` for a custom K1 IK config.
 - `tools/beat2_batch.py`: BEAT2 speakers → 10 s windows → GMR → ground_clip → QC table (`notes/beat2-qc.md`) → `combine-motions` train / held-out artifacts. Cached per stage. `uv run python tools/beat2_batch.py --train ... --heldout ...`
 - `docs/motion_preparation.md`: converting/uploading GMR `.pkl` / BeyondMimic `.csv` clips.
 
@@ -78,7 +78,8 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-16: multi-clip tracking built (`MultiMotionCommand`, `combine-motions`, per-clip `eval-tracking`; `notes/multi-clip.md`). Tests pass on CPU. `e2p0f89y` (one wave) fails 49/50 on the other wave → next: first multi-clip run on the club GPU.
 - 2026-10-16: multi-clip sanity run `8ku1opzv` (`waves-2clip:v0`, 4096 envs, 2,500 it, club GPU): 50/50 on both waves, matching the single-clip policies (hands 1.5 / 1.6 cm). Multi-clip works.
 - 2026-10-16: BEAT2 batch (`tools/beat2_batch.py`, QC in `notes/beat2-qc.md`): 152 clips, 12 severe excluded → `beat2-10s-train:v0` (98 clips, 16.3 min, 6 speakers) and `beat2-10s-heldout:v0` (42 clips, 7.0 min; Nidal, Ayana). Read held-out eval per speaker (Nidal is low-motion). Next: first general-tracker run.
-- 2026-10-16: fixed GMR IK start (left arm stuck behind the body in 20/152 BEAT2 clips; seeded with HOME arms in `tools/gmr_retarget.py`). Use **`beat2-10s-train:v1`** (106 clips, 17.7 min) / **`beat2-10s-heldout:v1`** (44 clips, 7.3 min); v0 is bad. Note: GMR's K1 config maps the K1 hand to the human elbow (forearm ignored).
+- 2026-10-16: fixed GMR IK start (left arm stuck behind the body in 20/152 BEAT2 clips; seeded with HOME arms in `tools/gmr_retarget.py`). Use **`beat2-10s-train:v1`** (106 clips, 17.7 min) / **`beat2-10s-heldout:v1`** (44 clips, 7.3 min); v0 is bad.
 - 2026-10-17: first general tracker `0lg80c7d` (`beat2-10s-train:v1`, 30k it) **stuck** at ~2.5k it: adaptive sampling gave one GMR-glitch clip (`wayne_0_9_9_t12-22`, arm joint snaps 0.9 rad in one frame) 70–77% of starts. Eval: held-out 43/44, train 103/106, hands 6.7 / 5.8 cm (single-clip ~2). Fixes: `joint jump` severe QC flag, `adaptive_uniform_ratio = 1.0` (K1 env_cfgs). Use **`beat2-10s-train:v2`** (103 clips, 17.2 min) / **`beat2-10s-heldout:v2`** (43 clips, 7.2 min).
 - 2026-10-17: run `s5cdzms7` (`beat2-10s-train:v2`, 10k it, 2.6 h): plateau fixed. **Use `model_8500.pt`** (beats model_9999; late-run policy std drift). Eval hands: train 2.5 cm (100/103 clips 50/50), held-out 3.05 cm (Nidal 2.3, Ayana 4.6; 42/43), pushes no effect; 0lg80c7d was 5.8 / 6.7. Open: foot tilt > 10° on most Lawrence/Solomon clips.
+- 2026-10-17: Slice 0 video recorded (`s5cdzms7`, Scott clip, audio dubbed; `play --video True --hide-overlays`, 1080p). K1 leans back: GMR's K1 config makes the trunk copy the human **pelvis** (no waist). `tools/ik_configs/smplx_to_k1_torso.json` (`Trunk ← spine1`) matches Scott's torso lean (−6.0° vs −6.5°; pelvis: −15°); `beat2_batch.py --ik-config`. Arms are fine (forearm follows the human forearm).
 - Open questions for lead: which K1 ankle model (standard vs `-Parallel`).
