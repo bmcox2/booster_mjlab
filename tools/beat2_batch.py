@@ -263,10 +263,17 @@ def combine(name: str, clips: list[dict], spec: dict, args) -> str | None:
         return None
     art = f"{spec['name']}-{name}"
     out = spec["out_dir"] / "combined" / f"{art}.npz"
-    cmd = ["uv", "run", "combine-motions", *[str(c["grounded"]) for c in clips], "--workers", str(args.workers),
-           "--no-upload", "--output", str(out)]
-    print(f"[combine] {name}: {len(clips)} clips, {sum(c['end'] - c['start'] for c in clips) / 3600:.2f} h -> {out}")
-    subprocess.run(cmd, check=True, cwd=REPO, capture_output=True, text=True)
+    hours = sum(c["end"] - c["start"] for c in clips) / 3600
+    # Reuse the file if it holds exactly these clips and is newer than all of them (converting
+    # thousands of .pkl clips again takes about an hour; uploading afterwards shouldn't).
+    if (not args.force and out.exists() and all(newer(out, c["grounded"]) for c in clips)
+            and clip_qc.combined_clip_names(out) == [c["name"] for c in clips]):
+        print(f"[combine] {name}: {len(clips)} clips, {hours:.2f} h, cached {out}")
+    else:
+        cmd = ["uv", "run", "combine-motions", *[str(c["grounded"]) for c in clips], "--workers", str(args.workers),
+               "--no-upload", "--output", str(out)]
+        print(f"[combine] {name}: {len(clips)} clips, {hours:.2f} h -> {out}")
+        subprocess.run(cmd, check=True, cwd=REPO, capture_output=True, text=True)
 
     s = spec["sets"][name]
     if is_training(s):  # check the file that was actually written, not the list we meant to write
