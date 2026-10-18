@@ -16,13 +16,16 @@ Usage:
     uv run combine-motions <entity>/motion_upload/wave_000508-tracking:v3 \\
         <entity>/motion_upload/wave_001104-tracking:v2 --artifact-name waves-2clip
     uv run combine-motions ... --output logs/motions/waves_2clip.npz --no-upload   # local only
+    uv run combine-motions a.pkl b.pkl ... --workers 8   # convert .pkl clips in parallel (same output)
 """
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import re
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +50,9 @@ class Config:
     project: str = "motion_upload"
     device: str = "cpu"
     """Device for converting .pkl clips."""
+    workers: int = 1
+    """Convert .pkl clips in this many processes at once. Each conversion builds its own one-robot sim and
+    runs on one core, so this scales with cores; the output is identical (clips keep their order)."""
 
 
 @dataclass
@@ -164,7 +170,13 @@ def main() -> None:
     if not cfg.upload and cfg.output is None:
         raise SystemExit("--no-upload needs --output, or nothing is saved")
 
-    clips = [clip for src in cfg.sources for clip in load_source(src, cfg.device)]
+    if cfg.workers > 1 and len(cfg.sources) > 1:
+        # spawn, not fork: each worker starts clean instead of inheriting torch / warp state.
+        with ProcessPoolExecutor(cfg.workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+            loaded = list(pool.map(load_source, cfg.sources, [cfg.device] * len(cfg.sources)))
+    else:
+        loaded = [load_source(src, cfg.device) for src in cfg.sources]
+    clips = [clip for src_clips in loaded for clip in src_clips]
     if cfg.names is not None:
         if len(cfg.names) != len(clips):
             raise SystemExit(f"--names has {len(cfg.names)} names for {len(clips)} clips")

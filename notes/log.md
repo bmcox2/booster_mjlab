@@ -616,8 +616,21 @@
 - spine1 vs pelvis after `ground_clip`: feet 1.8 / 1.8 cm, trunk drop 1.5 / 1.8 cm, no limits, max joint step 0.23 rad both; **CoM over the feet** (mean −0.2 cm vs −1.4 cm behind the feet centre)
 - Saved as `tools/ik_configs/smplx_to_k1_torso.json` (GMR's config with `Trunk ← spine1`, position weight 0: hips/feet place the trunk). `beat2_batch.py --ik-config` passes it through. Without `--ik-config` the output is unchanged (0.0 diff vs the cached v2 clip)
 
+## 2026-10-18: parallel BEAT2 pipeline (~45 min → 3 min); torso-config data → beat2-10s-*:v3
+
+**Parallel pipeline** (`--workers`, default 12; commit below)
+- Timing (laptop, serial): GMR 1.9 s/clip + ~4 s startup, ground < 1 s, windows 0.7 s/take, QC wrist 0.3 s/clip, **combine-motions 3.3 s/clip on one core** (builds a one-robot sim per clip + per-frame Python FK) → most of the ~45 min. i9-13900H: 20 threads, 31 GB
+- `beat2_batch.py --workers N`: windows / convert / ground / QC-wrist in a `ProcessPoolExecutor` (spawn context, one `Grounder` per worker via initializer); GMR split across N `gmr_retarget.py` processes (`todo[i::n]`); `combine-motions --workers N` converts .pkl clips in parallel, order kept
+- Processes, not threads (GIL; GMR/FK loops are Python). spawn, not fork (torch / warp thread pools + fork = inherited locked mutexes). No shared mutable state: one solver/sim per clip or worker, one output file per clip, tmp + `os.replace` writes, each stage waits for all workers before the next. ~1.5 GB RAM per worker
+- Verified bit-identical: from-scratch parallel run on 2_scott + 21_ayana (17 clips) == serial v2 files (smplx, k1, grounded, combined held-out frames, QC flags). combine 12 clips: 44 s → 15 s (worker import ~8 s each)
+
+**v3 data** (torso IK config)
+- `uv run python tools/beat2_batch.py --train 2_scott 1_wayne 3_solomon 4_lawrence 7_sophie 9_miranda --heldout 11_nidal 21_ayana --exclude severe --ik-config tools/ik_configs/smplx_to_k1_torso.json --out-dir ~/robotics/data/beat2_batch_torso --qc notes/beat2-qc-torso.md --workers 12` (smplx/ copied from v2 with `cp -a`, so convert was cached): **189 s**
+- **`beat2-10s-train:v3`** (105 clips) / **`beat2-10s-heldout:v3`** (43 clips). Excluded: the same 4 joint-jump clips. Back in vs v2: `wayne_0_10_10_t49-59` (elbow 5.4 → 2.9 cm behind the trunk; threshold 5) and `lawrence_0_4_4_t1-11` (trunk-drop robust z fell under 3.5; 3.2 cm range). Both were borderline, not IK failures
+- All 152 clips, mean trunk lean: human torso −4.8°, v2 (pelvis) −7.9°, v3 (spine1) −2.8°. Per-clip |K1 − human|: median 3.4° → 2.5°, v3 closer on 104/152. CoM vs feet centre −0.9 → −0.2 cm. v3 is now ~2° too upright on average (Scott was the best case)
+
 ## Next
-- Rebuild BEAT2 with the torso config → `:v3` (separate `--out-dir`), retrain, eval vs `s5cdzms7`; then re-record the Scott video
+- Train on `beat2-10s-train:v3` (10k it, club GPU), eval on `:v3` train / held-out (+ `--push`) vs `s5cdzms7` model_8500; re-record the Scott video (lean). Note v3 train has 2 more clips than v2
 - QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
 - `play` `s5cdzms7` model_8500: arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip
 - Foot tilt (> 10° on most Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward

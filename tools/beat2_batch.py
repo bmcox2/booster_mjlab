@@ -12,6 +12,10 @@ For every take of the listed speakers:
 Every stage skips clips that are already done, so re-running after downloading more speakers only
 processes the new takes. Use --force to redo everything.
 
+Clips are independent, so every slow stage runs --workers clips at once (default: up to 12 processes;
+GMR solves one tiny IK per frame and the K1 sims are one robot each, so cores help and a GPU wouldn't).
+The output is identical to --workers 1. Each worker needs up to ~1.5 GB of RAM.
+
 Usage (from ~/projects/booster-mjlab):
     uv run python tools/beat2_batch.py \\
         --train 2_scott 1_wayne 3_solomon 4_lawrence 7_sophie 9_miranda --heldout 11_nidal 21_ayana
@@ -25,11 +29,13 @@ import argparse
 import contextlib
 import io
 import json
+import multiprocessing
 import os
 import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -84,6 +90,17 @@ JOINT_JUMP_RAD = 0.6
 MAD_FLOOR = {"arms_k1_cm_s": 2.0, "trunk_drop_cm": 0.5, "knee_max_deg": 3.0}
 
 
+def pool_map(fn, items: list, workers: int, initializer=None, initargs=()) -> list:
+    """map() over items in `workers` fresh processes (spawn: no inherited state), keeping order."""
+    if workers <= 1 or len(items) <= 1:
+        if initializer:
+            initializer(*initargs)
+        return [fn(x) for x in items]
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(min(workers, len(items)), mp_context=ctx, initializer=initializer, initargs=initargs) as pool:
+        return list(pool.map(fn, items))
+
+
 def find_takes(beat2_dir: Path, speaker: str) -> list[Path]:
     """Takes of one speaker: '2_scott' matches 2_scott_*.npz; a bare 'scott' matches any id."""
     motion_dir = beat2_dir / "smplxflame_30"
@@ -101,6 +118,19 @@ def newer(dst: Path, src: Path) -> bool:
 
 # ---------------------------------------------------------------------------------------- stages
 
+def pick_windows_safe(job: tuple[Path, argparse.Namespace]) -> tuple[list[dict], str]:
+    take, args = job
+    try:
+        return pick_windows(take, args)
+    except Exception as e:  # e.g. a take that is still downloading
+        print(f"[warn] {take.name}: {e}")
+        return [], f"unreadable: {type(e).__name__}"
+
+
+def human_wrist_forward_job(job: tuple[Path, Path]) -> list[float]:
+    return human_wrist_forward(*job)
+
+
 def pick_windows(take: Path, args) -> tuple[list[dict], str]:
     """Top --per-take non-overlapping still windows of one take, best arm activity first."""
     t = b2g.read_take(take, args.model_dir, None, verbose=False)
@@ -113,42 +143,61 @@ def pick_windows(take: Path, args) -> tuple[list[dict], str]:
     return picks, note
 
 
+def convert_one(job: tuple[dict, argparse.Namespace]) -> None:
+    c, args = job
+    wav = args.beat2_dir / "wave16k" / f"{c['take'].stem}.wav"
+    ns = argparse.Namespace(start=c["start"], end=c["end"], up=None, wav=wav if wav.exists() else None,
+                            model_dir=args.model_dir)
+    with contextlib.redirect_stdout(io.StringIO()):  # converter is chatty; errors still raise
+        b2g.convert(c["take"], c["smplx"], ns)
+
+
 def convert(clips: list[dict], args) -> None:
-    for c in clips:
-        if newer(c["smplx"], c["take"]) and not args.force:
-            continue
-        wav = args.beat2_dir / "wave16k" / f"{c['take'].stem}.wav"
-        ns = argparse.Namespace(start=c["start"], end=c["end"], up=None, wav=wav if wav.exists() else None,
-                                model_dir=args.model_dir)
-        with contextlib.redirect_stdout(io.StringIO()):  # converter is chatty; errors still raise
-            b2g.convert(c["take"], c["smplx"], ns)
+    todo = [c for c in clips if args.force or not newer(c["smplx"], c["take"])]
+    pool_map(convert_one, [(c, args) for c in todo], args.workers)
 
 
 def retarget(clips: list[dict], args) -> None:
     todo = [c for c in clips if args.force or not newer(c["k1"], c["smplx"])]
     if not todo:
         return
-    print(f"[gmr] retargeting {len(todo)} clip(s) headless with {GMR_PYTHON}")
-    cmd = [str(GMR_PYTHON), str(TOOLS / "gmr_retarget.py")]
+    n = max(1, min(args.workers, len(todo)))
+    print(f"[gmr] retargeting {len(todo)} clip(s) headless with {GMR_PYTHON}, {n} process(es)")
+    base = [str(GMR_PYTHON), str(TOOLS / "gmr_retarget.py")]
     if args.ik_config:
-        cmd += ["--ik-config", str(args.ik_config.resolve())]
-    cmd += [str(p) for c in todo for p in (c["smplx"], c["k1"])]
+        base += ["--ik-config", str(args.ik_config.resolve())]
     env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}  # prove it's headless
-    subprocess.run(cmd, check=True, env=env)
+    # Each clip gets its own GMR solver (gmr_retarget.py builds one per clip), so splitting the list
+    # across processes gives the same clips as one process.
+    procs = [subprocess.Popen(base + [str(p) for c in todo[i::n] for p in (c["smplx"], c["k1"])], env=env)
+             for i in range(n)]
+    failed = [p.args for p in procs if p.wait() != 0]
+    if failed:
+        sys.exit(f"[gmr] {len(failed)} of {n} retarget process(es) failed")
 
 
-def ground(clips: list[dict], grounder: Grounder, args) -> None:
-    for c in clips:
-        log = c["grounded"].with_suffix(".txt")
-        if newer(c["grounded"], c["k1"]) and log.exists() and not args.force:
-            continue
-        out = io.StringIO()
-        tmp = c["grounded"].with_name(c["grounded"].stem + ".tmp.pkl")  # rename when complete (safe to interrupt)
-        with contextlib.redirect_stdout(out):
-            grounder.ground(c["k1"], tmp)
-        os.replace(tmp, c["grounded"])
-        log.write_text(out.getvalue())
-        print(f"[ground] {c['name']}")
+_GROUNDER: Grounder | None = None  # one per worker process
+
+
+def _init_grounder() -> None:
+    global _GROUNDER
+    _GROUNDER = Grounder(DEFAULT_GMR_XML, DEFAULT_ROBOT_XML)
+
+
+def ground_one(c: dict) -> str:
+    out = io.StringIO()
+    tmp = c["grounded"].with_name(c["grounded"].stem + ".tmp.pkl")  # rename when complete (safe to interrupt)
+    with contextlib.redirect_stdout(out):
+        _GROUNDER.ground(c["k1"], tmp)
+    os.replace(tmp, c["grounded"])
+    c["grounded"].with_suffix(".txt").write_text(out.getvalue())
+    return c["name"]
+
+
+def ground(clips: list[dict], args) -> None:
+    todo = [c for c in clips if args.force or not (newer(c["grounded"], c["k1"]) and c["grounded"].with_suffix(".txt").exists())]
+    for name in pool_map(ground_one, todo, args.workers, initializer=_init_grounder):
+        print(f"[ground] {name}")
 
 
 # ---------------------------------------------------------------------------------------- QC
@@ -367,7 +416,7 @@ def combine(split: str, clips: list[dict], args) -> str | None:
         print(f"[combine] no {split} clips; skipping")
         return None
     name = f"{args.artifact_prefix}-{split}"
-    cmd = ["uv", "run", "combine-motions", *[str(c["grounded"]) for c in clips]]
+    cmd = ["uv", "run", "combine-motions", *[str(c["grounded"]) for c in clips], "--workers", str(args.workers)]
     if args.upload:
         cmd += ["--artifact-name", name] + (["--entity", args.entity] if args.entity else [])
     else:
@@ -402,6 +451,8 @@ def main() -> None:
     ap.add_argument("--ik-config", type=Path, default=None,
                     help="custom GMR IK config for the K1 (e.g. tools/ik_configs/smplx_to_k1_torso.json); "
                          "use a separate --out-dir, since cached clips are not redone when this changes")
+    ap.add_argument("--workers", type=int, default=min(12, os.cpu_count() or 1),
+                    help="clips processed at once in each stage (same output as 1; ~1.5 GB RAM each)")
     ap.add_argument("--force", action="store_true", help="redo every stage")
     args = ap.parse_args()
 
@@ -422,12 +473,7 @@ def main() -> None:
                 notes["missing_speakers"].append(spk)
                 continue
             notes["speaker_takes"][spk] = len(takes)
-            for take in takes:
-                try:
-                    picks, note = pick_windows(take, args)
-                except Exception as e:  # e.g. a take that is still downloading
-                    picks, note = [], f"unreadable: {type(e).__name__}"
-                    print(f"[warn] {take.name}: {e}")
+            for take, (picks, note) in zip(takes, pool_map(pick_windows_safe, [(t, args) for t in takes], args.workers)):
                 if note:
                     notes["short_takes"].append((take.stem, note))
                 for w in picks:
@@ -449,16 +495,17 @@ def main() -> None:
     convert(clips, args)
     print(f"[convert] {len(clips)} windows ready in {args.out_dir / 'smplx'}")
     retarget(clips, args)
+    ground(clips, args)
     grounder = Grounder(DEFAULT_GMR_XML, DEFAULT_ROBOT_XML)
-    ground(clips, grounder, args)
 
     # 5. QC
     checker = K1Checker(grounder)
     rows = []
-    for c in clips:
+    wrists = pool_map(human_wrist_forward_job, [(c["smplx"], args.model_dir) for c in clips], args.workers)
+    for c, wrist in zip(clips, wrists):
         r = {k: v for k, v in c.items() if k not in ("smplx", "k1", "grounded")}
         r.update(take=c["take"].stem, max_foot_move_cm=args.max_foot_move * 100, ik_fail_frames=ik_failures(c["grounded"].with_suffix(".txt")),
-                 hand_fwd_human_m=human_wrist_forward(c["smplx"], args.model_dir))
+                 hand_fwd_human_m=wrist)
         r.update(checker.check(c["grounded"]))
         rows.append(r)
     flag(rows)
