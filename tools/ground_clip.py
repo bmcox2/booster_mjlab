@@ -9,7 +9,9 @@ each sole is level. After grounding, a flat foot can still hover (often on a str
 can't reach further), so the trunk is lowered by one constant amount for the clip and leg IK
 puts each foot back on the floor by bending its knee. GMR copies the human's foot angle, which leaves K1 standing on foot edges
 (6-9 deg on wave_000508); a policy trained on that learns to roll its ankle. Feet in the air are
-left alone, with a smooth blend in between. Disable with --keep-foot-tilt.
+left alone, with a smooth blend in between. A foot that is stepping (moving sideways, see
+STEP_SPEED) is lifted on a small arc instead of planted, since GMR barely lifts K1 feet and a
+planted step is a skid. Disable all of this with --keep-foot-tilt.
 
 Each <name>.pkl is written to <name>_grounded.pkl next to it. Clips that are already
 grounded (or whose _grounded.pkl is newer than the source) are skipped.
@@ -46,6 +48,13 @@ STANCE_LO, STANCE_HI = 0.015, 0.04
 # change needs a large knee angle change, which turns mm-level differences into knee jitter.
 KNEE_MARGIN = 0.003
 LEG_JOINTS = ("Hip_Pitch", "Hip_Roll", "Hip_Yaw", "Knee_Pitch", "Ankle_Pitch", "Ankle_Roll")
+# Steps. GMR moves the K1 foot sideways when the human steps but barely lifts it (5-15 mm while the
+# human lifts 3-6 cm), and planting then pressed it flat: the step became a skid on the floor. A foot
+# moving sideways faster than STEP_SPEED, by at least STEP_MIN_DIST over the episode, is stepping:
+# it is lifted on a half-sine arc of STEP_LIFT_FRAC x the step length (clamped to STEP_LIFT_RANGE)
+# instead of being planted. Episodes are padded by STEP_PAD frames so the arc starts and ends at rest.
+STEP_SPEED, STEP_MIN_DIST, STEP_PAD = 0.15, 0.03, 2
+STEP_LIFT_FRAC, STEP_LIFT_RANGE = 0.25, (0.01, 0.03)
 
 # GMR's K1 model names a few joints differently from booster-mjlab's.
 RENAME = {
@@ -195,12 +204,17 @@ class Grounder:
         stance weight). Lowering the trunk means the IK only ever has to lift a foot, i.e. bend a
         knee, which is always reachable. A constant drop keeps the knee angles smooth over time.
         """
-        heights = self.foot_heights(motion)
+        heights, xy = self.foot_heights(motion, with_xy=True)
         weights = self.stance_weights(heights)
         root_pos = np.array(motion["root_pos"], dtype=float)
         dof_pos = np.array(motion["dof_pos"], dtype=float)
         drop = {side: weights[side] * np.maximum(heights[side], 0.0) for side in self.feet}
         d = max(v.max() for v in drop.values()) + KNEE_MARGIN
+        # A stepping foot ends at least `lift` above the floor instead of being pressed onto it.
+        lift = {side: step_lift(xy[side], float(motion["fps"])) for side in self.feet}
+        for side in self.feet:
+            drop[side] -= np.maximum(0.0, lift[side] - (np.maximum(heights[side], 0.0) - drop[side]))
+        steps = {side: count_steps(lift[side]) for side in self.feet}
         failed = 0
         prev = {side: None for side in self.feet}  # warm start from the previous frame
         for t, root_xyzw in enumerate(motion["root_rot"]):
@@ -225,16 +239,21 @@ class Grounder:
                 prev = {side: None for side in self.feet}
         motion["root_pos"], motion["dof_pos"] = root_pos, dof_pos
         print(f"  planted feet: trunk lowered by {d * 1000:.1f} mm"
-              + (f" | IK failed on {failed} frames (left unchanged)" if failed else ""))
+              + (f" | IK failed on {failed} frames (left unchanged)" if failed else "")
+              + "".join(f" | {side} foot steps {n}x (lifted up to {lift[side].max() * 1000:.0f} mm)"
+                        for side, n in steps.items() if n))
 
-    def foot_heights(self, motion):
-        """Lowest world z of each foot, per frame."""
+    def foot_heights(self, motion, with_xy=False):
+        """Lowest world z of each foot, per frame (and, with_xy, the foot body's horizontal position)."""
         h = {side: [] for side in self.feet}
+        xy = {side: [] for side in self.feet}
         for frame in zip(motion["root_pos"], motion["root_rot"], motion["dof_pos"]):
             self.set_pose(*frame)
             for side, foot in self.feet.items():
                 h[side].append(self.geom_lowest_z(foot["geom"]))
-        return {side: np.array(v) for side, v in h.items()}
+                xy[side].append(self.data.xpos[foot["body"]][:2].copy())
+        h = {side: np.array(v) for side, v in h.items()}
+        return (h, {side: np.array(v) for side, v in xy.items()}) if with_xy else h
 
     def flatten_feet(self, motion):
         weights = self.stance_weights(self.foot_heights(motion))
@@ -332,6 +351,29 @@ class Grounder:
         with open(dst, "wb") as f:
             pickle.dump(motion, f)
         print(f"  saved -> {dst}")
+
+
+def step_lift(xy, fps):
+    """Per-frame lift (m) for one foot: a half-sine arc over every step (see STEP_SPEED)."""
+    n = len(xy)
+    speed = np.linalg.norm(np.diff(xy, axis=0), axis=1) * fps
+    speed = np.convolve(np.r_[speed[:1], speed], np.ones(3) / 3, mode="same")  # 0.1 s average
+    moving = speed > STEP_SPEED
+    edges = np.flatnonzero(np.diff(np.r_[0, moving.astype(int), 0]))
+    lift = np.zeros(n)
+    for s, e in zip(edges[::2], edges[1::2]):
+        s, e = max(0, s - STEP_PAD), min(n, e + STEP_PAD)
+        dist = np.linalg.norm(xy[e - 1] - xy[s])
+        if dist < STEP_MIN_DIST:
+            continue  # a pivot or weight shift, not a step: stays planted
+        height = np.clip(STEP_LIFT_FRAC * dist, *STEP_LIFT_RANGE)
+        arc = height * np.sin(np.pi * (np.arange(e - s) + 0.5) / (e - s))
+        lift[s:e] = np.maximum(lift[s:e], arc)
+    return lift
+
+
+def count_steps(lift):
+    return int(np.count_nonzero(np.diff(np.r_[0, (lift > 0).astype(int)]) == 1))
 
 
 def collect(paths):

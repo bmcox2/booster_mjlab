@@ -22,6 +22,7 @@ Combined files are built by ``uv run combine-motions``. See notes/multi-clip.md.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -30,6 +31,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 
+import mjlab.tasks.tracking.mdp.commands as mjlab_commands
 from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg
 from mjlab.utils.lab_api.math import quat_from_euler_xyz, quat_mul, sample_uniform
 
@@ -76,6 +78,44 @@ def kernel_index(clip_bin_counts: torch.Tensor, kernel_size: int) -> torch.Tenso
     return torch.minimum(b[:, None] + k[None, :], clip_last_bin[bin_clip][:, None])
 
 
+class LeanMotionLoader:
+    """mjlab's MotionLoader with the same tensors, at about half the GPU memory.
+
+    mjlab moves all bodies of every frame to the device, then indexes the tracked bodies out of
+    them, which copies: the device holds every body array twice (~0.53 GB per hour of 50 Hz
+    reference for the K1's 25 bodies). This picks the tracked bodies on the CPU and moves only
+    them, so a ~30 h BEAT2 training file takes ~8 GB instead of ~16. Nothing reads the
+    full-body arrays (``_body_*``) except MotionLoader itself.
+    """
+
+    def __init__(self, motion_file: str, body_indexes: torch.Tensor, device: str = "cpu") -> None:
+        idx = body_indexes.cpu().numpy()
+        with np.load(motion_file) as data:
+            def put(key: str, bodies: bool = False) -> torch.Tensor:
+                arr = data[key]
+                return torch.tensor(arr[:, idx] if bodies else arr, dtype=torch.float32, device=device)
+
+            self.joint_pos = put("joint_pos")
+            self.joint_vel = put("joint_vel")
+            self.body_pos_w = put("body_pos_w", True)
+            self.body_quat_w = put("body_quat_w", True)
+            self.body_lin_vel_w = put("body_lin_vel_w", True)
+            self.body_ang_vel_w = put("body_ang_vel_w", True)
+        self._body_indexes = body_indexes
+        self.time_step_total = self.joint_pos.shape[0]
+
+
+@contextlib.contextmanager
+def _lean_motion_loader():
+    """Make mjlab's MotionCommand.__init__ build a LeanMotionLoader (only while it runs)."""
+    original = mjlab_commands.MotionLoader
+    mjlab_commands.MotionLoader = LeanMotionLoader
+    try:
+        yield
+    finally:
+        mjlab_commands.MotionLoader = original
+
+
 class MultiMotionCommand(MotionCommand):
     cfg: MultiMotionCommandCfg
 
@@ -83,11 +123,12 @@ class MultiMotionCommand(MotionCommand):
         """mjlab: loads the whole file into ``self.motion`` (MotionLoader), sets every robot's
         ``time_steps`` to 0, and builds ~1 s adaptive-sampling bins over the whole file.
 
-        Changed: the frames are still loaded once, by mjlab, unchanged. On top, this reads the
-        clip table from the same file, gives each robot a (clip, frame) pair, and rebuilds the
-        bins per clip so that no bin spans two clips.
+        Changed: the frames are loaded once, by mjlab's own code, through LeanMotionLoader (same
+        tensors, half the GPU memory). On top, this reads the clip table from the same file, gives
+        each robot a (clip, frame) pair, and rebuilds the bins per clip so that no bin spans two clips.
         """
-        super().__init__(cfg, env)
+        with _lean_motion_loader():
+            super().__init__(cfg, env)
 
         names, lengths = read_clip_table(cfg.motion_file)
         total = self.motion.time_step_total

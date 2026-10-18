@@ -84,6 +84,7 @@ LIMITS = {
     # older checks (beat2_batch QC); clips that trained to 50/50: K1 feet <= 1.8 cm, trunk <= 1.8 cm,
     # knees 14-36 deg, 0 joint-limit frames
     "feet_k1_cm": 8.0,            # K1 is ~0.6x human: the 10 cm human filter allows ~6 cm
+    "feet_k1_cm_b": 18.0,         # Tier B (foot shifts, human <= 25 cm): ~15 cm on the K1
     "trunk_drop_cm": 5.0,
     "knee_max_deg": 60.0,
     "limit_frac": 0.05,           # a joint group within 1 deg of a limit on more than this share of frames
@@ -280,7 +281,7 @@ def flag(rows: list[dict], limits: dict | None = None) -> None:
 
         if r.get("feet_human_cm", 0) > r.get("max_foot_move_cm", np.inf):
             add("human steps")
-        if r["feet_k1_cm"] > L["feet_k1_cm"]:
+        if r["feet_k1_cm"] > L["feet_k1_cm" if r.get("tier", "A") == "A" else "feet_k1_cm_b"]:
             add(f"K1 feet move {r['feet_k1_cm']:.0f} cm")
         if r["trunk_drop_cm"] > L["trunk_drop_cm"]:
             add(f"trunk drop {r['trunk_drop_cm']:.0f} cm")

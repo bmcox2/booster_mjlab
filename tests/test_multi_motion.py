@@ -19,10 +19,10 @@ import pytest
 import torch
 
 import booster_mjlab.tasks  # noqa: F401, registers the K1 tasks
-from booster_mjlab.tasks.tracking.multi_motion_command import MultiMotionCommand, kernel_index
+from booster_mjlab.tasks.tracking.multi_motion_command import LeanMotionLoader, MultiMotionCommand, kernel_index
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
-from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg
+from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg, MotionLoader
 
 MOTION = Path(os.environ.get("MULTI_MOTION_FILE", "logs/motions/waves_2clip.npz"))
 TASK = "Mjlab-Tracking-Flat-Booster-K1"
@@ -188,3 +188,12 @@ def test_single_clip_matches_mjlab(env, cmd, tmp_path):
         torch.manual_seed(seed)
         multi._uniform_sampling(ids)
         assert torch.equal(plain.time_steps, multi.time_steps)
+
+
+def test_lean_loader_matches_mjlab(cmd):
+    """LeanMotionLoader holds exactly mjlab's tracked-body tensors (it only skips the full-body copies)."""
+    lean, full = cmd.motion, MotionLoader(str(MOTION), cmd.body_indexes, device="cpu")
+    assert isinstance(lean, LeanMotionLoader) and lean.time_step_total == full.time_step_total
+    for key in ("joint_pos", "joint_vel", "body_pos_w", "body_quat_w", "body_lin_vel_w", "body_ang_vel_w"):
+        assert torch.equal(getattr(lean, key), getattr(full, key)), key
+    assert not hasattr(lean, "_body_pos_w")
