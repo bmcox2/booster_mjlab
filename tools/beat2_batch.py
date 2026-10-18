@@ -1,32 +1,33 @@
-"""BEAT2 takes -> still, gesturing 10 s windows -> grounded K1 clips -> QC table -> train / held-out artifacts.
+"""Dataset spec -> BEAT2 segments -> grounded K1 clips -> Gate 1 QC -> combined artifacts, in one command.
 
-For every take of the listed speakers:
-1. pick windows: beat2_to_gmr's --find-still scoring, per take: drop windows where an ankle moves more
-   than --max-foot-move, rank the rest by arm activity, keep the top --per-take non-overlapping ones
-2. convert each window (beat2_to_gmr: Y-up -> Z-up, 16 betas, trimmed audio .wav alongside)
-3. retarget with GMR, headless (tools/gmr_retarget.py, run with GMR's venv)
+The spec (tools/datasets/*.toml) says which speakers are held out, which official split types
+(train / val / test / additional) and tiers go into which set, the segment limits, the GMR IK config,
+and the QC limits. Stages, in order:
+
+1. segment: every still stretch of every take a set uses, cut into 4-20 s Tier A / Tier B clips
+   (tools/beat2_segments.py; human motion only, so it can run before the GMR config is final)
+2. convert: each clip to GMR's input (beat2_to_gmr: Y-up -> Z-up, 16 betas, trimmed audio if on disk)
+3. retarget with GMR, headless (tools/gmr_retarget.py, run with GMR's venv; --workers processes)
 4. ground_clip (flatten stance feet, plant them, put the lowest point on the floor)
-5. QC every clip on booster-mjlab's K1 model and write a table to notes/ (--qc), flagging outliers
-6. combine-motions twice: one artifact for the training speakers, one for the held-out speakers
+5. qc: Gate 1 checks on booster-mjlab's K1 model (tools/clip_qc.py) -> <qc_report>, flags severe clips
+6. combine: one file per set; training sets are checked for leakage (held-out speakers, other split
+   types, takes shared with an eval set) on the written file before anything is uploaded
 
-Every stage skips clips that are already done, so re-running after downloading more speakers only
-processes the new takes. Use --force to redo everything.
-
-Clips are independent, so every slow stage runs --workers clips at once (default: up to 12 processes;
-GMR solves one tiny IK per frame and the K1 sims are one robot each, so cores help and a GPU wouldn't).
-The output is identical to --workers 1. Each worker needs up to ~1.5 GB of RAM.
+Every stage skips clips that are already done. The out-dir remembers the segment limits and IK config
+it was built with and refuses to mix in clips built differently (use a new out_dir, or --force).
+Each worker needs up to ~1.5 GB of RAM.
 
 Usage (from ~/projects/booster-mjlab):
-    uv run python tools/beat2_batch.py \\
-        --train 2_scott 1_wayne 3_solomon 4_lawrence 7_sophie 9_miranda --heldout 11_nidal 21_ayana
-    ... --no-upload        # build local combined files in <out-dir>/combined/ instead of uploading
-    ... --exclude severe   # leave severely flagged clips out of the artifacts (see SEVERE; all stay in the QC table)
-    ... --exclude flagged  # leave every flagged clip out
+    uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml --stages segment   # human side only
+    uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml                    # all, then upload
+    ... --no-upload        # write <out_dir>/combined/<name>-<set>.npz only
+    ... --sets train val   # combine only these sets
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import multiprocessing
@@ -36,136 +37,95 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 
-import mujoco
 import numpy as np
 
 TOOLS = Path(__file__).resolve().parent
 REPO = TOOLS.parent
 sys.path.insert(0, str(TOOLS))
+import beat2_segments as bs  # noqa: E402
 import beat2_to_gmr as b2g  # noqa: E402
-from ground_clip import BODY, DEFAULT_GMR_XML, DEFAULT_ROBOT_XML, JOINT, RENAME, Grounder  # noqa: E402
+import clip_qc  # noqa: E402
+from ground_clip import DEFAULT_GMR_XML, DEFAULT_ROBOT_XML, Grounder  # noqa: E402
 
 GMR_PYTHON = Path.home() / "projects/GMR/.venv/bin/python"
-
-# Fixed QC limits. Clips that trained to 50/50 (wave_000113/000508/001104, talk_scott_1_1_t34-44) are
-# at most: K1 feet 1.8 cm, trunk height range 1.8 cm, knees 14-36 deg, 0 joint-limit frames.
-QC_LIMITS = {
-    # The K1 is ~0.6x human scale, so --max-foot-move's 10 cm on the human allows ~6 cm on the K1;
-    # more than this means retargeting/grounding added foot motion.
-    "feet_k1_cm": 8.0,
-    "trunk_drop_cm": 5.0,      # trunk height range over the clip (squat, lunge, big weight shift)
-    "knee_max_deg": 60.0,      # deep knee bend
-    "limit_frac": 0.05,        # share of frames with a joint group within 1 deg of a limit (see LIMIT_KINDS)
-    "arms_k1_cm_s": 5.0,       # below this the K1's hands barely move: not much gesture left
-}
-LIMIT_MARGIN = np.radians(1.0)
-# Joint-limit hits, grouped by what they mean. The elbow bend (Elbow_Yaw) at 0 is a straight arm, a
-# normal pose, so that side is not counted.
-LIMIT_KINDS = (
-    ("Elbow_Pitch", "upper-arm twist"),  # straight arm: twist doesn't move the hand, so GMR's IK drifts to the limit
-    ("Head", "head"),                    # the speaker looks further than the K1's head can: nods get clipped
-    ("Shoulder", "shoulder"),            # arm pose clipped
-    ("Elbow_Yaw", "elbow bend"),         # fully bent
-    ("", "leg"),                         # hips, knees, ankles
-)
-ROBUST_Z = 3.5  # also flag values this many robust SDs (median / MAD) from the batch
-# Severe = the reference itself is suspect, so `--exclude severe` drops it. Head or shoulder held at a
-# limit is not severe: the clipped pose is still valid K1 motion, only less expressive.
-SEVERE_TWIST_FRAC = 0.5  # upper-arm twist at its limit on more than this share of frames
-# Arm on the wrong side: the K1's hand is on average this far behind the trunk while the human's wrist is
-# this far in front of the pelvis (GMR's IK stuck with the arm swung back). Severe: the reference is wrong.
-ARM_BEHIND_M, HUMAN_FRONT_M = 0.05, 0.05
-# Joint jump: a joint moves more than this in one 1/30 s frame. GMR's IK flipping branch (e.g. the
-# upper-arm twist snapping 90 deg), not the speaker: the hand reference teleports, no policy can track
-# it, and adaptive sampling then pours most training starts into that bin (run 0lg80c7d: 70-77% of
-# starts on wayne_0_9_9_t12-22). Among 152 clips the 4 glitches were 0.92-1.57 rad; real fast motion
-# (elbow bends, quick twists) stayed <= 0.52 rad. Severe.
-JOINT_JUMP_RAD = 0.6
-# Feet are left out: K1 foot motion is ~1 cm for most clips with a long tail of weight shifts (4-7 cm,
-# within what --max-foot-move allows), so a batch-relative test flags normal speakers. The fixed
-# feet_k1_cm limit still applies.
-MAD_FLOOR = {"arms_k1_cm_s": 2.0, "trunk_drop_cm": 0.5, "knee_max_deg": 3.0}
-
-
-def pool_map(fn, items: list, workers: int, initializer=None, initargs=()) -> list:
-    """map() over items in `workers` fresh processes (spawn: no inherited state), keeping order."""
-    if workers <= 1 or len(items) <= 1:
-        if initializer:
-            initializer(*initargs)
-        return [fn(x) for x in items]
-    ctx = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(min(workers, len(items)), mp_context=ctx, initializer=initializer, initargs=initargs) as pool:
-        return list(pool.map(fn, items))
-
-
-def find_takes(beat2_dir: Path, speaker: str) -> list[Path]:
-    """Takes of one speaker: '2_scott' matches 2_scott_*.npz; a bare 'scott' matches any id."""
-    motion_dir = beat2_dir / "smplxflame_30"
-    pattern = f"{speaker}_*.npz" if re.match(r"\d+_", speaker) else f"[0-9]*_{speaker}_*.npz"
-    return sorted(motion_dir.glob(pattern))
-
-
-def clip_name(take: Path, start: float, end: float) -> str:
-    return f"{take.stem.split('_', 1)[1]}_t{start:.0f}-{end:.0f}"  # 2_scott_0_1_1 -> scott_0_1_1_t34-44
+STAGES = ("segment", "convert", "retarget", "ground", "qc", "combine")
+TRAINING_TYPES = {"train", "additional"}  # split types a training set may use
 
 
 def newer(dst: Path, src: Path) -> bool:
     return dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime
 
 
-# ---------------------------------------------------------------------------------------- stages
-
-def pick_windows_safe(job: tuple[Path, argparse.Namespace]) -> tuple[list[dict], str]:
-    take, args = job
-    try:
-        return pick_windows(take, args)
-    except Exception as e:  # e.g. a take that is still downloading
-        print(f"[warn] {take.name}: {e}")
-        return [], f"unreadable: {type(e).__name__}"
-
-
-def human_wrist_forward_job(job: tuple[Path, Path]) -> list[float]:
-    return human_wrist_forward(*job)
-
-
-def pick_windows(take: Path, args) -> tuple[list[dict], str]:
-    """Top --per-take non-overlapping still windows of one take, best arm activity first."""
-    t = b2g.read_take(take, args.model_dir, None, verbose=False)
-    if len(t["root_orient"]) / t["fps"] < args.window:
-        return [], "shorter than the window"
-    rows = b2g.score_windows(take, t, args.model_dir, args.window)
-    still = sorted((r for r in rows if r["foot_move"] <= args.max_foot_move), key=lambda r: -r["arm"])
-    picks = b2g.top_non_overlapping(still, args.per_take)
-    note = "" if len(picks) == args.per_take else f"only {len(picks)} still window(s) of {len(rows)}"
-    return picks, note
+def check_stamp(spec: dict, force: bool) -> None:
+    """Refuse to reuse an out-dir built with other segment limits or another IK config."""
+    ik = spec.get("ik_config")
+    stamp = {"segments": asdict(spec["segment_cfg"]),
+             "ik_config": str(ik) if ik else "",
+             "ik_config_sha1": hashlib.sha1(Path(ik).read_bytes()).hexdigest() if ik else ""}
+    path = spec["out_dir"] / "build.json"
+    if path.exists() and not force:
+        old = json.loads(path.read_text())
+        if old != stamp:
+            diff = [k for k in stamp if old.get(k) != stamp[k]]
+            sys.exit(f"{spec['out_dir']} was built with different {', '.join(diff)}; its cached clips would be "
+                     "mixed in. Use a new out_dir in the spec, or --force to rebuild everything.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(stamp, indent=1))
 
 
-def convert_one(job: tuple[dict, argparse.Namespace]) -> None:
-    c, args = job
-    wav = args.beat2_dir / "wave16k" / f"{c['take'].stem}.wav"
+# ---------------------------------------------------------------------------------------- stages 1-4
+
+def clips_from_segments(spec: dict, takes: list[dict]) -> list[dict]:
+    """Every segment some set uses, with its file paths and the sets it belongs to."""
+    out_dir, clips = spec["out_dir"], []
+    for t in takes:
+        for c in t.get("clips", []):
+            sets = [name for name, s in spec["sets"].items()
+                    if c["group"] == s["speakers"] and c["type"] in s["takes"] and c["tier"] in s["tiers"]]
+            if not sets:
+                continue
+            clips.append({**c, "sets": sets,
+                          "smplx": out_dir / "smplx" / f"{c['name']}.npz",
+                          "k1": out_dir / "k1" / f"{c['name']}.pkl",
+                          "grounded": out_dir / "k1" / f"{c['name']}_grounded.pkl"})
+    names = [c["name"] for c in clips]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        sys.exit(f"Duplicate clip names (two segments round to the same seconds?): {dupes[:5]}")
+    return clips
+
+
+def convert_one(job: tuple[dict, Path, Path]) -> None:
+    c, beat2_dir, model_dir = job
+    wav = beat2_dir / "wave16k" / f"{c['take']}.wav"
     ns = argparse.Namespace(start=c["start"], end=c["end"], up=None, wav=wav if wav.exists() else None,
-                            model_dir=args.model_dir)
+                            model_dir=model_dir)
     with contextlib.redirect_stdout(io.StringIO()):  # converter is chatty; errors still raise
-        b2g.convert(c["take"], c["smplx"], ns)
+        b2g.convert(beat2_dir / "smplxflame_30" / f"{c['take']}.npz", c["smplx"], ns)
 
 
-def convert(clips: list[dict], args) -> None:
-    todo = [c for c in clips if args.force or not newer(c["smplx"], c["take"])]
-    pool_map(convert_one, [(c, args) for c in todo], args.workers)
+def convert(clips: list[dict], spec: dict, args) -> None:
+    src = lambda c: spec["beat2_dir"] / "smplxflame_30" / f"{c['take']}.npz"  # noqa: E731
+    todo = [c for c in clips if args.force or not newer(c["smplx"], src(c))]
+    bs.pool_map(convert_one, [(c, spec["beat2_dir"], spec["model_dir"]) for c in todo], args.workers)
+    print(f"[convert] {len(todo)} converted, {len(clips) - len(todo)} cached")
 
 
-def retarget(clips: list[dict], args) -> None:
+def retarget(clips: list[dict], spec: dict, args) -> None:
     todo = [c for c in clips if args.force or not newer(c["k1"], c["smplx"])]
     if not todo:
         return
+    if not GMR_PYTHON.exists():
+        sys.exit(f"GMR's venv python not found: {GMR_PYTHON}")
     n = max(1, min(args.workers, len(todo)))
     print(f"[gmr] retargeting {len(todo)} clip(s) headless with {GMR_PYTHON}, {n} process(es)")
     base = [str(GMR_PYTHON), str(TOOLS / "gmr_retarget.py")]
-    if args.ik_config:
-        base += ["--ik-config", str(args.ik_config.resolve())]
+    if spec.get("ik_config"):
+        base += ["--ik-config", str(spec["ik_config"])]
     env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}  # prove it's headless
     # Each clip gets its own GMR solver (gmr_retarget.py builds one per clip), so splitting the list
     # across processes gives the same clips as one process.
@@ -196,70 +156,20 @@ def ground_one(c: dict) -> str:
 
 def ground(clips: list[dict], args) -> None:
     todo = [c for c in clips if args.force or not (newer(c["grounded"], c["k1"]) and c["grounded"].with_suffix(".txt").exists())]
-    for name in pool_map(ground_one, todo, args.workers, initializer=_init_grounder):
-        print(f"[ground] {name}")
+    if not todo:
+        return
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max(1, min(args.workers, len(todo))), mp_context=ctx, initializer=_init_grounder) as pool:
+        for i, _ in enumerate(pool.map(ground_one, todo, chunksize=4), 1):
+            if i % 200 == 0 or i == len(todo):
+                print(f"[ground] {i}/{len(todo)}")
 
 
-# ---------------------------------------------------------------------------------------- QC
+# ---------------------------------------------------------------------------------------- stage 5: QC
 
-class K1Checker:
-    """QC numbers for a grounded clip, on booster-mjlab's K1 model (the one training uses)."""
-
-    def __init__(self, grounder: Grounder):
-        self.g = grounder
-        rob = grounder.rob
-        self.joint_names = [RENAME.get(n, n) for n in grounder.gmr_joints]  # .pkl column order
-        self.limits = np.array([rob.jnt_range[mujoco.mj_name2id(rob, JOINT, n)] for n in self.joint_names])
-        self.knees = [self.joint_names.index(f"{s}_Knee_Pitch") for s in ("Left", "Right")]
-        # Elbow_Yaw is the elbow bend; its limit at 0 is a straight arm and isn't counted as a limit hit.
-        self.elbow_bend = np.array(["Elbow_Yaw" in n for n in self.joint_names])
-        self.body = {b: mujoco.mj_name2id(rob, BODY, b)
-                     for b in ("Trunk", "left_hand_link", "right_hand_link", "left_foot_link", "right_foot_link")}
-
-    def check(self, path: Path) -> dict:
-        import pickle
-
-        with open(path, "rb") as f:
-            m = pickle.load(f)
-        g, data, b = self.g, self.g.data, self.body
-        fps = float(m["fps"])
-        feet, hands = [], []
-        for frame in zip(m["root_pos"], m["root_rot"], m["dof_pos"]):
-            g.set_pose(*frame)
-            R, o = data.xmat[b["Trunk"]].reshape(3, 3), data.xpos[b["Trunk"]]
-            hands.append([R.T @ (data.xpos[b[h]] - o) for h in ("left_hand_link", "right_hand_link")])
-            feet.append([data.xpos[b[f]][:2].copy() for f in ("left_foot_link", "right_foot_link")])
-        feet, hands = np.array(feet), np.array(hands)  # (T, 2, 2), (T, 2, 3); hands: trunk frame, x forward
-        dof = np.asarray(m["dof_pos"])
-        lo, hi = self.limits[:, 0], self.limits[:, 1]
-        straight_lo, straight_hi = self.elbow_bend & (lo == 0), self.elbow_bend & (hi == 0)  # straight-arm side
-        near = ((dof <= lo + LIMIT_MARGIN) & ~straight_lo) | ((dof >= hi - LIMIT_MARGIN) & ~straight_hi)
-        kinds = {}
-        for j in np.flatnonzero(near.any(axis=0)):
-            kind = next(k for key, k in LIMIT_KINDS if key in self.joint_names[j])
-            kinds.setdefault(kind, np.zeros(len(dof), bool))
-            kinds[kind] |= near[:, j]
-        knee = np.degrees(dof[:, self.knees])
-        step = np.abs(np.diff(dof, axis=0))
-        jump_frame, jump_joint = np.unravel_index(step.argmax(), step.shape)
-        return {
-            "feet_k1_cm": float(np.linalg.norm(feet - np.median(feet, axis=0), axis=-1).max() * 100),
-            "arms_k1_cm_s": float(np.linalg.norm(np.diff(hands, axis=0), axis=-1).mean() * fps * 100),
-            "hand_fwd_k1_m": [float(v) for v in hands[:, :, 0].mean(axis=0)],
-            "trunk_drop_cm": float(np.ptp(np.asarray(m["root_pos"])[:, 2]) * 100),
-            "knee_min_deg": [float(v) for v in knee.min(axis=0)],
-            "knee_max_deg": float(knee.max()),
-            "knee_range_deg": [[float(lo), float(hi)] for lo, hi in zip(knee.min(axis=0), knee.max(axis=0))],
-            "limit_frac": float(near.any(axis=1).mean()),
-            "limit_kinds": {k: float(v.mean()) for k, v in kinds.items()},
-            "limit_joints": {self.joint_names[j]: int(near[:, j].sum()) for j in np.flatnonzero(near.any(axis=0))},
-            "joint_jump_rad": float(step.max()),
-            "joint_jump_at": [self.joint_names[jump_joint], float((jump_frame + 1) / fps)],  # joint, seconds
-        }
-
-
-def human_wrist_forward(smplx_npz: Path, model_dir: Path) -> list[float]:
+def human_wrist_forward(job: tuple[Path, Path]) -> list[float]:
     """Mean (left, right) wrist position along the human's forward axis, relative to the pelvis, m."""
+    smplx_npz, model_dir = job
     take = b2g.read_take(smplx_npz, model_dir, "+z", verbose=False)
     pos, pelvis_rot = b2g.body_joint_positions(take, model_dir)
     return [float(pelvis_rot.inv().apply(pos[:, j] - pos[:, 0])[:, 2].mean())  # SMPL-X body +z = forward
@@ -271,265 +181,177 @@ def ik_failures(log: Path) -> int:
     return int(m.group(1)) if m else 0
 
 
-def flag(rows: list[dict]) -> None:
-    """Fixed limits, plus robust outliers relative to this batch."""
-    stats = {}
-    for k, floor in MAD_FLOOR.items():
-        v = np.array([r[k] for r in rows])
-        stats[k] = (np.median(v), max(1.4826 * np.median(np.abs(v - np.median(v))), floor))
+def qc(clips: list[dict], spec: dict, args) -> list[dict]:
+    limits = {k: v for k, v in spec.get("qc", {}).items() if k in clip_qc.LIMITS}
+    cfg = spec["segment_cfg"]
+    k1 = clip_qc.check_all([c["grounded"] for c in clips], args.workers, limits)
+    wrists = bs.pool_map(human_wrist_forward, [(c["smplx"], spec["model_dir"]) for c in clips], args.workers)
+    rows = []
+    for c, r, w in zip(clips, k1, wrists):
+        r.update({k: v for k, v in c.items() if k not in ("smplx", "k1", "grounded")},
+                 hand_fwd_human_m=w, ik_fail_frames=ik_failures(c["grounded"].with_suffix(".txt")),
+                 max_foot_move_cm=cfg.tier_a_cm if c["tier"] == "A" else cfg.tier_b_cm)
+        rows.append(r)
+    clip_qc.flag(rows, limits)
+    exclude = args.exclude or spec.get("qc", {}).get("exclude", "severe")
     for r in rows:
-        f = []
-        if r["feet_human_cm"] > r["max_foot_move_cm"]:
-            f.append("human steps")
-        if r["feet_k1_cm"] > QC_LIMITS["feet_k1_cm"]:
-            f.append(f"K1 feet move {r['feet_k1_cm']:.0f} cm")
-        if r["trunk_drop_cm"] > QC_LIMITS["trunk_drop_cm"]:
-            f.append(f"trunk drop {r['trunk_drop_cm']:.0f} cm")
-        if r["knee_max_deg"] > QC_LIMITS["knee_max_deg"]:
-            f.append(f"knee {r['knee_max_deg']:.0f} deg")
-        for kind, frac in r["limit_kinds"].items():
-            if frac > QC_LIMITS["limit_frac"]:
-                f.append(f"{kind} at limit {frac:.0%}")
-        if r["arms_k1_cm_s"] < QC_LIMITS["arms_k1_cm_s"]:
-            f.append("little arm motion")
-        if r["ik_fail_frames"]:
-            f.append(f"ground IK failed {r['ik_fail_frames']} frames")
-        severe = []
-        for k, (med, sd) in stats.items():
-            z = (r[k] - med) / sd
-            if abs(z) > ROBUST_Z:
-                f.append(f"outlier {k.rsplit('_', 1)[0].replace('_', ' ')} (z {z:+.1f})")
-                if k == "trunk_drop_cm" and z > 0:
-                    severe.append(f[-1])
-        if r["limit_kinds"].get("upper-arm twist", 0.0) > SEVERE_TWIST_FRAC:
-            severe.append(next(x for x in f if x.startswith("upper-arm twist")))
-        if r["ik_fail_frames"]:
-            severe.append(next(x for x in f if x.startswith("ground IK failed")))
-        if r["joint_jump_rad"] > JOINT_JUMP_RAD:
-            joint, t = r["joint_jump_at"]
-            f.append(f"joint jump {r['joint_jump_rad']:.2f} rad ({joint} at {t:.1f} s)")
-            severe.append(f[-1])
-        for side, k1, human in zip(("left", "right"), r["hand_fwd_k1_m"], r["hand_fwd_human_m"]):
-            if k1 < -ARM_BEHIND_M and human > HUMAN_FRONT_M:
-                f.append(f"{side} arm behind body (human's in front)")
-                severe.append(f[-1])
-        r["flags"], r["severe"] = f, severe
+        r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
+    return rows
 
 
-def speaker_rows(rows: list[dict], notes: dict) -> list[str]:
-    """Per-speaker counts: how many clips, and how often each kind of flag fires (share of that speaker's clips)."""
-    out = []
-    for spk in dict.fromkeys(r["speaker"] for r in rows):
-        rs = [r for r in rows if r["speaker"] == spk]
-        n = len(rs)
-
-        def share(test):
-            k = sum(1 for r in rs if test(r))
-            return f"{k} ({k / n:.0%})"
-
-        def has(prefix):
-            return lambda r: any(x.startswith(prefix) for x in r["flags"])
-
-        other = lambda r: any(not x.startswith(("head", "shoulder", "upper-arm twist")) for x in r["flags"])  # noqa: E731
-        out.append(f"| {rs[0]['split']} | {spk} | {notes['speaker_takes'].get(spk, 0)} | {n} | {share(lambda r: r['flags'])} | "
-                   f"{share(lambda r: r['severe'])} | {share(has('head'))} | {share(has('shoulder'))} | "
-                   f"{share(has('upper-arm twist'))} | {share(other)} |")
-    return out
-
-
-def write_qc(rows: list[dict], notes: dict, args, path: Path) -> None:
-    def cell(r):
-        knees = " / ".join(f"{lo:.0f}–{hi:.0f}" for lo, hi in r["knee_range_deg"])
-        limits = ", ".join(f"{k} {v:.0%}" for k, v in sorted(r["limit_kinds"].items(), key=lambda kv: -kv[1])) or "0"
-        return (f"| {r['split']} | `{r['name']}` | {r['take']} {r['start']:.0f}–{r['end']:.0f} s | "
-                f"{r['feet_human_cm']:.1f} / {r['feet_k1_cm']:.1f} | {r['arms_human_cm_s']:.0f} / {r['arms_k1_cm_s']:.0f} | "
-                f"{r['trunk_drop_cm']:.1f} | {knees} | {limits} | {flags(r)} |")
-
-    def flags(r):
-        text = "; ".join(f"**{x}**" if x in r["severe"] else x for x in r["flags"]) or "—"
-        return text + (" *(excluded)*" if r["excluded"] else "")
-
-    flagged = [r for r in rows if r["flags"]]
-    by_split = {s: [r for r in rows if r["split"] == s] for s in ("train", "heldout")}
+def write_qc(rows: list[dict], spec: dict, artifacts: dict, path: Path) -> None:
+    """Per speaker / tier summary, how often each check fires, and every flagged clip."""
+    exclude = spec.get("qc", {}).get("exclude", "severe")
+    kinds = {}
+    for r in rows:
+        for f in r["flags"]:
+            k = re.sub(r"[\d.]+", "#", f.split(" (")[0])
+            kinds.setdefault(k, [0, 0])
+            kinds[k][0] += 1
+            kinds[k][1] += f in r["severe"]
     lines = [
-        "# BEAT2 Clip QC",
+        "# BEAT2 Clip QC (Gate 1)",
         "",
-        f"Generated {date.today()} by `tools/beat2_batch.py` "
-        f"({args.window:g} s windows, top {args.per_take} per take, ankles within {args.max_foot_move * 100:.0f} cm). "
-        "One row per clip; rerun the script to refresh.",
+        f"Generated {date.today()} by `tools/beat2_batch.py --spec {spec['_spec_path']}`. "
+        "Checks and limits: `tools/clip_qc.py` (calibration: `notes/gate1-calibration.md`). All numbers per clip: "
+        f"`{spec['out_dir'] / 'qc.json'}`.",
         "",
-        f"- **Clips:** {len(rows)} ({len(by_split['train'])} train, {len(by_split['heldout'])} held-out), "
-        f"**{len(flagged)} flagged**, {sum(bool(r['severe']) for r in rows)} severe (**bold**); "
-        f"{sum(r['excluded'] for r in rows)} left out of the artifacts (`--exclude {args.exclude}`)",
-        "- **Train speakers:** " + ", ".join(f"{s} ({notes['speaker_clips'].get(s, 0)} clips)" for s in args.train),
-        "- **Held-out speakers:** " + ", ".join(f"{s} ({notes['speaker_clips'].get(s, 0)} clips)" for s in args.heldout),
+        f"- **Clips:** {len(rows)}, **{sum(bool(r['flags']) for r in rows)} flagged**, "
+        f"{sum(bool(r['severe']) for r in rows)} severe; {sum(r['excluded'] for r in rows)} left out (`exclude = {exclude}`)",
+        f"- **IK config:** `{spec.get('ik_config') or 'GMR default'}`",
     ]
-    if notes["missing_speakers"]:
-        lines.append(f"- **No takes found (not downloaded?):** {', '.join(notes['missing_speakers'])}")
-    if notes["short_takes"]:
-        lines.append("- **Takes with fewer windows:** " + "; ".join(f"{t} ({n})" for t, n in notes["short_takes"]))
-    for split, art in notes.get("artifacts", {}).items():
-        lines.append(f"- **{split} artifact:** `{art}`")
-    lines += [
-        "",
-        "## Per speaker",
-        "",
-        "| split | speaker | takes | clips | flagged | severe | head at limit | shoulder at limit | upper-arm twist | other |",
-        "|---|---|---|---|---|---|---|---|---|---|",
-        *speaker_rows(rows, notes),
-        "",
-        "## Columns",
-        "- **feet human / K1 (cm):** farthest an ankle (human, BEAT2) / foot (K1, after ground_clip) strays from its median spot",
-        "- **arms human / K1 (cm/s):** mean wrist speed relative to the pelvis (human) / hand speed relative to the trunk (K1)",
-        "- **trunk drop (cm):** K1 trunk height range over the clip",
-        "- **knees L / R (deg):** K1 knee angle range (0 = straight, limit 128)",
-        "- **joint limits:** share of frames with a joint within 1° of a limit, by group. *upper-arm twist*: "
-        "with a straight arm, twist doesn't move the hand, so GMR's IK drifts to the limit (hand is right, "
-        "arm is twisted); *head*: the speaker looks further than the K1 can, so nods are clipped; "
-        "*shoulder* / *leg*: pose clipped. A straight elbow (elbow bend at 0) is normal and not counted",
-        "",
-        "## Flags",
-        f"Fixed: K1 feet > {QC_LIMITS['feet_k1_cm']:g} cm, trunk drop > {QC_LIMITS['trunk_drop_cm']:g} cm, "
-        f"knee > {QC_LIMITS['knee_max_deg']:g}°, a joint group at its limit > {QC_LIMITS['limit_frac']:.0%} of frames, "
-        f"K1 hands < {QC_LIMITS['arms_k1_cm_s']:g} cm/s, any ground_clip IK failure. Clips that trained to 50/50 "
-        "so far: K1 feet ≤ 1.8 cm, trunk ≤ 1.8 cm, knees 14–36°, 0 limit frames, hands 8–16 cm/s.",
-        f"Outlier: more than {ROBUST_Z:g} robust SDs (median / MAD) from this batch on arms, trunk, or knee "
-        "(not feet: most clips move ~1 cm with a long tail of normal weight shifts; the fixed limit covers feet).",
-        f"**Severe** (dropped by `--exclude severe`): upper-arm twist at its limit on > {SEVERE_TWIST_FRAC:.0%} of frames, "
-        f"any ground_clip IK failure, a trunk-drop outlier, or an arm on the wrong side (K1 hand > {ARM_BEHIND_M * 100:.0f} cm "
-        f"behind the trunk while the human's wrist is > {HUMAN_FRONT_M * 100:.0f} cm in front), or a joint jump (a joint moving > {JOINT_JUMP_RAD:g} rad "
-        "in one 1/30 s frame: GMR's IK flipping, the hand reference teleports). Head or shoulder held at a limit is not severe: "
-        "the clipped pose is still valid K1 motion.",
-        "",
-        "| split | clip | source | feet human / K1 (cm) | arms human / K1 (cm/s) | trunk drop (cm) | knees L / R (deg) "
-        "| joint limits | flags |",
-        "|---|---|---|---|---|---|---|---|---|",
-    ]
-    lines += [cell(r) for r in rows]
+    for name, art in artifacts.items():
+        lines.append(f"- **{name}:** `{art}`")
+    lines += ["", "## Per speaker", "", "| group | speaker | tier | clips | minutes | flagged | severe | kept min |",
+              "|---|---|---|---|---|---|---|---|"]
+    keys = sorted({(r["group"], r["speaker"], r["tier"]) for r in rows}, key=lambda k: (k[0] != "train", int(k[1].split("_")[0]), k[2]))
+    for g, s, t in keys:
+        rs = [r for r in rows if (r["group"], r["speaker"], r["tier"]) == (g, s, t)]
+        mins = sum(r["end"] - r["start"] for r in rs) / 60
+        kept = sum(r["end"] - r["start"] for r in rs if not r["excluded"]) / 60
+        lines.append(f"| {g} | {s} | {t} | {len(rs)} | {mins:.1f} | {sum(bool(r['flags']) for r in rs)} | "
+                     f"{sum(bool(r['severe']) for r in rs)} | {kept:.1f} |")
+    lines += ["", "## Checks that fired", "", "| flag | clips | severe |", "|---|---|---|"]
+    lines += [f"| {k} | {n} | {sv} |" for k, (n, sv) in sorted(kinds.items(), key=lambda kv: -kv[1][0])]
+    lines += ["", "## Flagged clips", "", "Severe in **bold**.", "",
+              "| clip | tier | source | feet human / K1 (cm) | arms human / K1 (cm/s) | flags |", "|---|---|---|---|---|---|"]
+    for r in sorted((r for r in rows if r["flags"]), key=lambda r: (not r["severe"], r["name"])):
+        fl = "; ".join(f"**{x}**" if x in r["severe"] else x for x in r["flags"]) + (" *(excluded)*" if r["excluded"] else "")
+        lines.append(f"| `{r['name']}` | {r['tier']} | {r['take']} {r['start']:.1f}–{r['end']:.1f} s | "
+                     f"{r['feet_human_cm']:.1f} / {r['feet_k1_cm']:.1f} | {r['arms_human_cm_s']:.0f} / {r['arms_k1_cm_s']:.0f} | {fl} |")
     path.write_text("\n".join(lines) + "\n")
 
 
-# ---------------------------------------------------------------------------------------- combine
+# ---------------------------------------------------------------------------------------- stage 6: combine
 
-def combine(split: str, clips: list[dict], args) -> str | None:
+def is_training(s: dict) -> bool:
+    return s["speakers"] == "train" and set(s["takes"]) <= TRAINING_TYPES
+
+
+def check_sets(clips: list[dict], spec: dict) -> None:
+    """Training sets: no take may also be in an eval set (they never share a speaker group + type, but check)."""
+    train_takes = {c["take"] for c in clips for s in c["sets"] if is_training(spec["sets"][s])}
+    eval_takes = {c["take"] for c in clips for s in c["sets"] if not is_training(spec["sets"][s])}
+    shared = sorted(train_takes & eval_takes)
+    if shared:
+        sys.exit(f"[leakage] {len(shared)} takes are in both a training and an eval set, e.g. {shared[:5]}")
+
+
+def combine(name: str, clips: list[dict], spec: dict, args) -> str | None:
     if not clips:
-        print(f"[combine] no {split} clips; skipping")
+        print(f"[combine] {name}: no clips; skipping")
         return None
-    name = f"{args.artifact_prefix}-{split}"
-    cmd = ["uv", "run", "combine-motions", *[str(c["grounded"]) for c in clips], "--workers", str(args.workers)]
-    if args.upload:
-        cmd += ["--artifact-name", name] + (["--entity", args.entity] if args.entity else [])
-    else:
-        out = args.out_dir / "combined" / f"{name}.npz"
-        cmd += ["--no-upload", "--output", str(out)]
-    print(f"[combine] {split}: {len(clips)} clips -> {name}")
+    art = f"{spec['name']}-{name}"
+    out = spec["out_dir"] / "combined" / f"{art}.npz"
+    cmd = ["uv", "run", "combine-motions", *[str(c["grounded"]) for c in clips], "--workers", str(args.workers),
+           "--no-upload", "--output", str(out)]
+    print(f"[combine] {name}: {len(clips)} clips, {sum(c['end'] - c['start'] for c in clips) / 3600:.2f} h -> {out}")
+    subprocess.run(cmd, check=True, cwd=REPO, capture_output=True, text=True)
+
+    s = spec["sets"][name]
+    if is_training(s):  # check the file that was actually written, not the list we meant to write
+        split = bs.load_split(spec["beat2_dir"])
+        heldout = {k for k, g in bs.speaker_groups(spec, split).items() if g == "heldout"}
+        problems = clip_qc.leakage(clip_qc.combined_clip_names(out), split, heldout, set(s["takes"]))
+        if problems:
+            sys.exit(f"[leakage] {art}: {len(problems)} problems, e.g. {problems[:5]}; not uploading")
+        print(f"[leakage] {art}: clean (no held-out speakers, only {'/'.join(s['takes'])} takes)")
+    if not args.upload:
+        return str(out)
+    cmd = ["uv", "run", "combine-motions", str(out), "--artifact-name", art] + (["--entity", args.entity] if args.entity else [])
     res = subprocess.run(cmd, check=True, cwd=REPO, capture_output=True, text=True)
-    print("\n".join(line for line in res.stdout.splitlines() if line.startswith(("     total", "[out]", "[upload]"))))
     m = re.search(r"Uploaded artifact: (\S+)", res.stdout)
-    return m.group(1) if m else str(args.out_dir / "combined" / f"{name}.npz")
+    print(f"[upload] {m.group(1) if m else art}")
+    return m.group(1) if m else art
 
 
 # ---------------------------------------------------------------------------------------- main
 
 def main() -> None:
-    home = Path.home()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--train", nargs="+", required=True, help="training speakers, e.g. 2_scott 1_wayne")
-    ap.add_argument("--heldout", nargs="+", required=True, help="held-out speakers, e.g. 11_nidal 21_ayana")
-    ap.add_argument("--beat2-dir", type=Path, default=home / "robotics/data/BEAT2/beat_english_v2.0.0")
-    ap.add_argument("--out-dir", type=Path, default=home / "robotics/data/beat2_batch")
-    ap.add_argument("--qc", type=Path, default=REPO / "notes/beat2-qc.md", help="QC table to write")
-    ap.add_argument("--window", type=float, default=10.0, help="window length, seconds")
-    ap.add_argument("--per-take", type=int, default=2, help="windows per take")
-    ap.add_argument("--max-foot-move", type=float, default=0.10, help="m; see beat2_to_gmr --find-still")
-    ap.add_argument("--model-dir", type=Path, default=b2g.DEFAULT_MODEL_DIR)
-    ap.add_argument("--artifact-prefix", default="beat2-10s", help="artifacts: <prefix>-train, <prefix>-heldout")
+    ap.add_argument("--spec", type=Path, required=True, help="dataset spec, e.g. tools/datasets/beat2_full.toml")
+    ap.add_argument("--stages", nargs="+", choices=STAGES, default=list(STAGES),
+                    help="run up to and including the last stage listed (earlier stages reuse their cache)")
+    ap.add_argument("--sets", nargs="+", default=None, help="only build these sets (default: all in the spec)")
     ap.add_argument("--entity", default=os.environ.get("WANDB_ENTITY"))
-    ap.add_argument("--no-upload", dest="upload", action="store_false", help="write <out-dir>/combined/*.npz instead")
-    ap.add_argument("--exclude", choices=("none", "severe", "flagged"), default="none",
-                    help="leave clips out of the artifacts: severe flags only, or any flag (all stay in the QC table)")
-    ap.add_argument("--ik-config", type=Path, default=None,
-                    help="custom GMR IK config for the K1 (e.g. tools/ik_configs/smplx_to_k1_torso.json); "
-                         "use a separate --out-dir, since cached clips are not redone when this changes")
+    ap.add_argument("--no-upload", dest="upload", action="store_false", help="write <out_dir>/combined/*.npz only")
+    ap.add_argument("--exclude", choices=("none", "severe", "flagged"), default=None, help="override the spec's qc.exclude")
     ap.add_argument("--workers", type=int, default=min(12, os.cpu_count() or 1),
                     help="clips processed at once in each stage (same output as 1; ~1.5 GB RAM each)")
     ap.add_argument("--force", action="store_true", help="redo every stage")
     args = ap.parse_args()
 
-    overlap = set(args.train) & set(args.heldout)
-    if overlap:
-        sys.exit(f"Speakers in both splits: {sorted(overlap)}")
-    if not GMR_PYTHON.exists():
-        sys.exit(f"GMR's venv python not found: {GMR_PYTHON}")
-
-    # 1. windows
+    spec = bs.load_spec(args.spec)
+    spec["_spec_path"] = args.spec
+    spec["model_dir"] = Path(os.path.expanduser(spec.get("model_dir", str(b2g.DEFAULT_MODEL_DIR))))
+    if args.sets:
+        unknown = set(args.sets) - set(spec["sets"])
+        if unknown:
+            sys.exit(f"Sets not in the spec: {sorted(unknown)}")
+        spec["sets"] = {k: v for k, v in spec["sets"].items() if k in args.sets}
+    last = max(STAGES.index(s) for s in args.stages)
+    run = lambda stage: STAGES.index(stage) <= last  # noqa: E731
     t0 = time.time()
-    clips, notes = [], {"missing_speakers": [], "short_takes": [], "speaker_clips": {}, "speaker_takes": {}}
-    for split, speakers in (("train", args.train), ("heldout", args.heldout)):
-        for spk in speakers:
-            takes = find_takes(args.beat2_dir, spk)
-            if not takes:
-                print(f"[warn] {spk}: no takes in {args.beat2_dir / 'smplxflame_30'}")
-                notes["missing_speakers"].append(spk)
-                continue
-            notes["speaker_takes"][spk] = len(takes)
-            for take, (picks, note) in zip(takes, pool_map(pick_windows_safe, [(t, args) for t in takes], args.workers)):
-                if note:
-                    notes["short_takes"].append((take.stem, note))
-                for w in picks:
-                    name = clip_name(take, w["start"], w["end"])
-                    clips.append({
-                        "split": split, "speaker": spk, "take": take, "start": w["start"], "end": w["end"],
-                        "name": name, "feet_human_cm": w["foot_move"] * 100, "arms_human_cm_s": w["arm"] * 100,
-                        "pelvis_drop_human_cm": w["pelvis_drop"] * 100,
-                        "smplx": args.out_dir / "smplx" / f"{name}.npz",
-                        "k1": args.out_dir / "k1" / f"{name}.pkl",
-                        "grounded": args.out_dir / "k1" / f"{name}_grounded.pkl",
-                    })
-                    notes["speaker_clips"][spk] = notes["speaker_clips"].get(spk, 0) + 1
-            print(f"[windows] {spk} ({split}): {len(takes)} takes -> {notes['speaker_clips'].get(spk, 0)} clips")
-    if not clips:
-        sys.exit("No clips: check --beat2-dir and the speaker names")
+
+    # 1. segments (human side)
+    takes, missing = bs.segment_all(spec, args.workers)
+    bs.write_report(spec, takes, missing, spec.get("segments_report") or REPO / "notes/beat2-segments.md")
+    spec["out_dir"].mkdir(parents=True, exist_ok=True)
+    (spec["out_dir"] / "segments.json").write_text(json.dumps({"cfg": asdict(spec["segment_cfg"]), "missing": missing, "takes": takes}, indent=1))
+    clips = clips_from_segments(spec, takes)
+    print(f"[segment] {len(takes)} takes -> {len(clips)} clips, {sum(c['end'] - c['start'] for c in clips) / 3600:.1f} h "
+          f"({len(missing)} takes not on disk) -> {spec.get('segments_report')}")
+    if missing:
+        print(f"[warn] {len(missing)} takes the spec uses are not downloaded, e.g. {missing[:3]}")
+    if not run("convert"):
+        return
+    check_stamp(spec, args.force)
+    check_sets(clips, spec)
 
     # 2-4. convert, retarget, ground
-    convert(clips, args)
-    print(f"[convert] {len(clips)} windows ready in {args.out_dir / 'smplx'}")
-    retarget(clips, args)
-    ground(clips, args)
-    grounder = Grounder(DEFAULT_GMR_XML, DEFAULT_ROBOT_XML)
+    convert(clips, spec, args)
+    if run("retarget"):
+        retarget(clips, spec, args)
+    if run("ground"):
+        ground(clips, args)
+    if not run("qc"):
+        return
 
     # 5. QC
-    checker = K1Checker(grounder)
-    rows = []
-    wrists = pool_map(human_wrist_forward_job, [(c["smplx"], args.model_dir) for c in clips], args.workers)
-    for c, wrist in zip(clips, wrists):
-        r = {k: v for k, v in c.items() if k not in ("smplx", "k1", "grounded")}
-        r.update(take=c["take"].stem, max_foot_move_cm=args.max_foot_move * 100, ik_fail_frames=ik_failures(c["grounded"].with_suffix(".txt")),
-                 hand_fwd_human_m=wrist)
-        r.update(checker.check(c["grounded"]))
-        rows.append(r)
-    flag(rows)
-    for c, r in zip(clips, rows):
-        c["flags"] = r["flags"]
+    rows = qc(clips, spec, args)
+    (spec["out_dir"] / "qc.json").write_text(json.dumps({"clips": rows}, indent=1, default=str))
 
     # 6. combine
-    for c, r in zip(clips, rows):
-        c["excluded"] = r["excluded"] = bool(
-            (args.exclude == "severe" and r["severe"]) or (args.exclude == "flagged" and r["flags"]))
-    keep = [c for c in clips if not c["excluded"]]
-    notes["artifacts"] = {}
-    for split in ("train", "heldout"):
-        art = combine(split, [c for c in keep if c["split"] == split], args)
-        if art:
-            notes["artifacts"][split] = art
-
-    write_qc(rows, notes, args, args.qc)
-    (args.out_dir / "qc.json").write_text(json.dumps({"notes": notes, "clips": rows}, indent=2, default=str))
-    flagged = [r for r in rows if r["flags"]]
-    print(f"\n[qc] {len(rows)} clips, {len(flagged)} flagged -> {args.qc}")
-    for r in flagged:
-        mark = "EXCLUDED" if r["excluded"] else ("severe" if r["severe"] else "")
-        print(f"  {r['split']:<7} {r['name']:<28} {mark:<8} {'; '.join(r['flags'])}")
+    artifacts = {}
+    if run("combine"):
+        keep = [c for c, r in zip(clips, rows) if not r["excluded"]]
+        for name in spec["sets"]:
+            art = combine(name, [c for c in keep if name in c["sets"]], spec, args)
+            if art:
+                artifacts[name] = art
+    write_qc(rows, spec, artifacts, spec.get("qc_report") or REPO / "notes/beat2-qc.md")
+    print(f"[qc] {len(rows)} clips, {sum(bool(r['flags']) for r in rows)} flagged, "
+          f"{sum(r['excluded'] for r in rows)} excluded -> {spec.get('qc_report')}")
     print(f"[done] {time.time() - t0:.0f} s")
 
 

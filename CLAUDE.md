@@ -24,7 +24,7 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
-- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `multi-clip.md` (MultiMotionCommand design, diff from mjlab, per-clip metrics), `plan.md` (current step's checklist: Slice 0), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `multi-clip.md` (MultiMotionCommand design, diff from mjlab, per-clip metrics), `beat2-full-segments.md` / `gate1-calibration.md` (full BEAT2 dataset), `plan.md` (current step's checklist: Slice 0), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
 - Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 
@@ -39,7 +39,10 @@ Key paths:
 - `tools/ground_clip.py`: ground + flatten feet of GMR clips before upload.
 - `tools/beat2_to_gmr.py`: BEAT2 take → GMR input (`--find-still` ranks windows). Runs with GMR's venv or the booster venv.
 - `tools/gmr_retarget.py`: headless GMR retarget (no viewer). Must run with `~/projects/GMR/.venv/bin/python`. `--ik-config tools/ik_configs/<cfg>.json` for a custom K1 IK config.
-- `tools/beat2_batch.py`: BEAT2 speakers → 10 s windows → GMR → ground_clip → QC table (`notes/beat2-qc.md`) → `combine-motions` train / held-out artifacts. Cached per stage, `--workers` (default 12) parallel. `uv run python tools/beat2_batch.py --train ... --heldout ...`
+- `tools/beat2_batch.py`: dataset spec → segments → GMR → ground_clip → Gate 1 QC → one combined file per set → leakage check → upload. Cached per stage, `--workers` (default 12). `uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml [--stages segment] [--no-upload]`. (The old `--train/--heldout` 10 s-window version built v0–v3; it is in git before 2026-10-18.)
+- `tools/datasets/beat2_full.toml`: full BEAT2 spec (held-out speakers, split types and tiers per set, IK config, QC limits).
+- `tools/beat2_segments.py`: human-side segmentation: Tier A (ankles within 10 cm) / Tier B (foot shifts ≤ 25 cm, `_shift`) 4–20 s clips, per-speaker report.
+- `tools/clip_qc.py`: Gate 1 checks on grounded K1 clips (jumps, trunk turn, speed, floor, foot slide, self-collision, limits, arm-behind, leakage); `LIMITS` calibrated in `notes/gate1-calibration.md`.
 - `docs/motion_preparation.md`: converting/uploading GMR `.pkl` / BeyondMimic `.csv` clips.
 
 ## Commands
@@ -83,4 +86,5 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-17: run `s5cdzms7` (`beat2-10s-train:v2`, 10k it, 2.6 h): plateau fixed. **Use `model_8500.pt`** (beats model_9999; late-run policy std drift). Eval hands: train 2.5 cm (100/103 clips 50/50), held-out 3.05 cm (Nidal 2.3, Ayana 4.6; 42/43), pushes no effect; 0lg80c7d was 5.8 / 6.7. Open: foot tilt > 10° on most Lawrence/Solomon clips.
 - 2026-10-17: Slice 0 video recorded (`s5cdzms7`, Scott clip, audio dubbed; `play --video True --hide-overlays`, 1080p). K1 leans back: GMR's K1 config makes the trunk copy the human **pelvis** (no waist). `tools/ik_configs/smplx_to_k1_torso.json` (`Trunk ← spine1`) matches Scott's torso lean (−6.0° vs −6.5°; pelvis: −15°); `beat2_batch.py --ik-config`. Arms are fine (forearm follows the human forearm).
 - 2026-10-18: `beat2_batch.py --workers` / `combine-motions --workers` (process pools, bit-identical): full BEAT2 build ~45 min → 3 min. Torso-config data: **`beat2-10s-train:v3`** (105 clips) / **`beat2-10s-heldout:v3`** (43) in `~/robotics/data/beat2_batch_torso` (QC `notes/beat2-qc-torso.md`); lean error vs human median 3.4° → 2.5°. Next: train on v3.
+- 2026-10-18: full BEAT2 phase 1 (human side). All session-0 takes downloaded. Official split respected (v1–v3 used only val/test takes). Held out: Nidal, Ayana, 20_li, 27_yingqing. Training Tier A 11.6 h (+2.8 h Tier B), segments in `notes/beat2-full-segments.md`. Session-1 `additional` takes = 10-min conversations (26 h, ~15 h Tier A for training speakers), not downloaded yet (decision pending). Gate 1 calibrated. Phase 2 waits for the v3 GMR config.
 - Open questions for lead: which K1 ankle model (standard vs `-Parallel`).

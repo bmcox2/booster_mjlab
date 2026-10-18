@@ -629,7 +629,38 @@
 - **`beat2-10s-train:v3`** (105 clips) / **`beat2-10s-heldout:v3`** (43 clips). Excluded: the same 4 joint-jump clips. Back in vs v2: `wayne_0_10_10_t49-59` (elbow 5.4 → 2.9 cm behind the trunk; threshold 5) and `lawrence_0_4_4_t1-11` (trunk-drop robust z fell under 3.5; 3.2 cm range). Both were borderline, not IK failures
 - All 152 clips, mean trunk lean: human torso −4.8°, v2 (pelvis) −7.9°, v3 (spine1) −2.8°. Per-clip |K1 − human|: median 3.4° → 2.5°, v3 closer on 104/152. CoM vs feet centre −0.9 → −0.2 cm. v3 is now ~2° too upright on average (Scott was the best case)
 
+## 2026-10-18: full BEAT2 dataset, phase 1 (human side): splits, segments, spec pipeline, Gate 1 QC
+
+Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarget → upload → train) waits for the v3 GMR config.
+
+**BEAT2 split file** (`train_test_split.csv`, no HF login needed): 1,620 takes, 25 speakers
+- 9 big speakers (1–4, 6, 7, 9, 11, 21): 95 `train` / 8 `val` (takes 9–16) / 15 `test` (1–8, 65, 73, 81, 87, 95, 103, 111) / 12 `additional`; Carla 63 / 0 / 7 / 12, Miranda + Ayana 7 test (1–8 missing)
+- 16 small speakers: 13–19 `train`, 0–2 `val` (9–10), 8–9 `test` (1, 2, 65, …); 5_stewart + 10_kieks: 7 train / 8 val / 15 test
+- Hours (motion): train 19.4, val 2.1, test 5.2, **additional 26.4**. The v1–v3 artifacts used takes 1–15: all official val/test (leakage check: 103/103 train clips)
+- **`additional` = session 1 = the 10-min conversation recordings** (7–12 min each; 12 per big speaker, 3 per small). Same bodies, standing, 58–87% speech, silences up to 28 s (instructor was remote, only the speaker recorded → silences are listening). Lawrence wanders (947° of turning), Scott steps; the rest stand. Tier A keeps 72% of the 7 training speakers' sample takes (≈15 h over all 21 h)
+- Downloaded: all 1,464 session-0 takes (4.3 GB, 5 min) + one session-1 take and transcript per big speaker. `gender` is `neutral` in every file; genders from BEAT Table 9 (arXiv 2203.05297), whose IDs disagree with BEAT2 on durations for 21 and 28
+
+**Held-out speakers:** 11_nidal, 21_ayana, **20_li (M), 27_yingqing (F)**. 5_stewart/10_kieks (most eval takes) were first pick, but they are calm (arms 15 cm/s, still feet) like Nidal (14); Li 21 / Yingqing 24 ≈ training median 22
+
+**Segments** (`tools/beat2_segments.py`, replaces top-k windows; report `notes/beat2-full-segments.md`)
+- Tier A: maximal stretches with ankles within 10 cm of their median, cut at planted frames (ankles < 0.1 m/s), 4–20 s clips (even split). Tier B: the foot shifts between them inside 25 cm stretches, ±2 s of standing, names `_shift`; overlaps A by the padding, so A stays the same whether B is admitted
+- Training (official train takes, 21 speakers): **11.6 h Tier A** (3,451 clips, 22% of time rejected) + 2.8 h Tier B. No speaker > 15% (Solomon 12.9% max). Scott loses 87%, Jorge 100% (steps 20–60 cm every ~1 s, real)
+- Eval: train-speaker val 74 min / test 188 min; held-out val 27 min / test 47 min (Tier A)
+- GPU memory: ~0.27 GB/h at 50 Hz (369 floats/frame) → 3.2 GB for A, 4.0 GB A+B; + session 1 ≈ 7 GB
+
+**Spec pipeline:** `tools/datasets/beat2_full.toml` + `uv run python tools/beat2_batch.py --spec <toml> [--stages segment]`: segment → convert → GMR → ground → QC → one combined file per set (train, train-shift, val, heldout-val, test, heldout-test) → leakage check on the written file → upload. `build.json` refuses to mix clips built with other segment limits / IK configs. Smoke test (3 speakers, 33 clips, no upload): 70 s end to end
+
+**Gate 1** (`tools/clip_qc.py`; calibration `notes/gate1-calibration.md` on the 152 v1 clips + torso clips)
+- Joint jump: plan's 0.3 rad flags 11 (7 are normal arm motion ≤ 0.52) → keep **0.6** (the 4 GMR flips)
+- New **trunk turn > 6°/frame**: real ≤ 4°; flips 14–33°, plus `ayana_0_12_12_t20-30` 7.6° (human pelvis 0.1°: a small GMR flip). Trunk move > 3 cm/frame
+- Joint speed > no-load limit > 0.1 s, floor > 5 mm, format, quaternion: 0 clips (30 fps steps only exceed limits inside a flip; ground_clip guarantees the floor). Kept as guards
+- Foot slide: plan's 1 cm/frame flags 21 (1–2 frame weight-shift pivots, Lawrence/Solomon) → planted = within 2 mm, **> 1 cm/frame for ≥ 0.1 s or > 3 cm in a frame**: 1 + the wayne flip. Smoke test: 4/33 new clips, all real (human foot lifts or stays still, K1 foot skids: small steps fall under ground_clip's stance threshold at 0.6 scale)
+- Self-collision: no arm–trunk overlaps; only hand into hip/thigh (≤ 25 mm, `scott_0_1_1_t34-44` 0.6 s, trained 50/50) → info only; any other pair severe
+- Severe on v1: 8 (4 flips, Ayana flip, Lawrence slide, wayne arm-behind, lawrence trunk drop). "Little arm motion" flag dropped (no arm floor now)
+
 ## Next
+- Decide: include session-1 conversation takes (`additional`, ≈ +15 h Tier A); then download them (≈ 2.8 GB for training speakers)
+- Phase 2 once the v3 GMR config is set (`ik_config` in the spec): full build (~7k clips, est. 3–4 h on the laptop CPU), Gate 2 audit (Sophie `sophie_0_17_17_t30-47` right arm 5 cm behind in the smoke test), probe run
 - Train on `beat2-10s-train:v3` (10k it, club GPU), eval on `:v3` train / held-out (+ `--push`) vs `s5cdzms7` model_8500; re-record the Scott video (lean). Note v3 train has 2 more clips than v2
 - QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
 - `play` `s5cdzms7` model_8500: arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip
