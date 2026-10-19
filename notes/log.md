@@ -737,12 +737,37 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Gotchas: shell variables like `$R` exist only in the shell that set them (on the laptop `$R` was empty → "Unrecognized options: model_5500.pt"). Laptop dGPU still off the PCI bus: `play` works on CPU, evals go to the club GPU
 - Slice 0 (`plan.md`): A–G done except the sync check; left: sync check, the "what step 1 must handle" list, EMAGE (optional)
 
+## 2026-10-18: full BEAT2 build (torso config) → beat2-full-torso-train-a / -train-b
+
+**Decisions** (from the plan review): include session-1 conversations as their own sets; hold out 6 speakers (Nidal, Ayana, 20_li, 27_yingqing + 5_stewart, 10_kieks: calm natives, nearly free to hold out); Tier B decided by an A vs A+B comparison after a ground_clip fix. GMR config: torso (`smplx_to_k1_torso.json`) until v3 exists
+
+**Fixes found on the way**
+- **Tier B skids:** GMR moves the K1 foot 3–6 cm on a step but lifts it only 5–15 mm (human 3–6 cm), so planting turned steps into slides. `ground_clip` now lifts a foot that travels ≥ 3 cm on a half-sine arc (0.25 × step, 1–3 cm). Waves + Scott clip unchanged; 31/152 v1 clips change, planted skating −24%, slide flags gone, knees +2°
+- **GPU memory:** mjlab's MotionLoader kept all 25 bodies *and* an indexed copy on the GPU (2× the file). `LeanMotionLoader` in MultiMotionCommand moves only the tracked bodies: same tensors (new test), ~0.27 GB per hour of reference. train-a ≈ 6.3 GB, A+B ≈ 7.8 GB on the 16 GB club GPU
+- **combine-motions:** streams to `--output` one array at a time (peak RAM ~1.3× instead of ~3×); **batched FK** (one sim per worker, 256 frames per forward) is bit-identical and ~25× faster (combine of all 16k clips: ~5 min instead of ~2 h)
+- **Laptop heat:** numpy threads × 10 workers pinned the CPU at 100 °C. Single-thread workers (`OMP_NUM_THREADS=1`) + a profile-cycling governor (balanced until chassis 65 °C, power-saver until 52 °C; ~3× power-saver speed) + watchdog. One core at full turbo always reads 100 °C on this laptop; chassis sensors are the real limit. Run future builds on the club PC
+- `pkill -f`/`pgrep -f` matched their own shell twice (killed or stopped the command): use PIDs or `[x]`-patterns
+
+**Build:** 1,378 takes → 16,155 clips, 45 h (segments → convert → GMR → ground → QC → combine). Gate 1 recalibrated on the full build (arm-behind severe only > 10 cm: 77% of flags were Sophie's clasped hands just past 5 cm; trunk-drop outlier severe only > 5 cm; self-overlap severe only > 25 mm) → **1,167 severe excluded** (GMR flips, ground IK failures 672, feet crossing, 84 real left-arm-behind). QC table `notes/beat2-full-qc.md`
+
+| set | clips | hours |
+|---|---|---|
+| train-a (Tier A, train + conversation takes, 19 speakers) | 7,310 | 23.6 |
+| train-b (Tier B) | 3,668 | 5.8 |
+| val / heldout-val | 474 / 194 | 1.3 / 0.8 |
+| test / heldout-test | 1,300 / 411 | 3.5 / 1.4 |
+| heldout-conv | 1,631 | 5.9 |
+
+- Leakage check clean on both training files. Uploaded `beat2-full-torso-train-a` / `-train-b` (`tools/upload_combined.py`, 11 MB/s); eval sets not uploaded yet
+
 ## Next
-- Decide: include session-1 conversation takes (`additional`, ≈ +15 h Tier A); then download them (≈ 2.8 GB for training speakers)
-- Phase 2 once the v3 GMR config is set (`ik_config` in the spec): full build (~7k clips, est. 3–4 h on the laptop CPU), Gate 2 audit (Sophie `sophie_0_17_17_t30-47` right arm 5 cm behind in the smoke test), probe run
+- Comparison runs on the club GPU (same seed, 6k it, entropy_coef 0.001): A = train-a, A+B = train-a + train-b (combine-motions locally). Then eval on val / heldout-val per tier and per speaker
+- Upload the eval sets (val, heldout-val, test, heldout-test, heldout-conv)
+- ground_clip IK failures (672 clips, mostly Tier B / conversations) and 84 clips with the left arm > 10 cm behind (IK-start bug back?): look before the v3 rebuild
+- Gate 2: histograms per split, visual audit of 20 random + worst clips
+- v3 GMR config → rebuild into a new out_dir (on the club PC)
 - Slice 0 wrap-up: check audio sync on a stressed word; write the "what step 1 must handle" list (`plan.md` I)
 - Optional: train-set eval of model_5999
-- Next general run: lower `entropy_coef` (0.005 → ~0.001) to stop the late mean_std drift
 - QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
 - `play` `s5cdzms7` model_8500: arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip
 - Foot tilt (> 10° on most Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
