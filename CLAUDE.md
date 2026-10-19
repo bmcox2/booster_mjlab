@@ -63,6 +63,8 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - Hardware: Dell XPS 15, RTX 4070 Laptop 8 GB, Ubuntu 24.04 (dual boot). GPU power capped ~35 W; dGPU has dropped out intermittently and the laptop has overheated before. Check `nvidia-smi` before runs; stop if GPU sustains >~87 °C. Prefer the club GPU for long runs.
 - 4096 envs fits in 8 GB (~3k iterations ≈ 2.5 h for the velocity task).
 - SSH: `ssh booster@10.193.169.55` (private campus IP, so it only works on the campus network or VPN).
+- **Resume training:** add `--agent.resume True` with `--wandb-run-path <entity>/mjlab/<run> --wandb-checkpoint-name model_N.pt`, or it silently starts from scratch. `--agent.max-iterations` = additional iterations. Run long jobs on the club GPU inside `tmux` (`tmux new -s train`, detach `Ctrl-b d`).
+- **WandB conventions:** name runs `MM-DD what-it-is`, tag them (`tracking`, `general`, `beat2`, `keep`/`superseded`...), one-line result note; dataset versions get a description, and the `current` alias moves to the version in use.
 - Club GPU WandB: shared `booster` account, so no `wandb login`. Run `source ~/bmcox2/.wandb_env` in each new shell before `uv run train` / `eval-tracking` / `play`.
 
 ## Status

@@ -690,6 +690,18 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - The torso IK config is strictly better: more human-like posture and easier to track (CoM over the feet)
 - s5cdzms7 gained ~10% from 3.5k to 8.5k; resuming fsyy1c2w to ~6k should give the best general tracker so far
 
+## 2026-10-18: resume mix-up; WandB cleanup
+
+**Resuming fsyy1c2w**
+- First try `hhlreous` started from scratch (iteration 0, reward 5.5, mean_std 0.64): my command had `--wandb-run-path ... --wandb-checkpoint-name model_3500.pt` but not **`--agent.resume True`**. mjlab's train only loads a checkpoint when resume is on; otherwise those flags are silently ignored
+- With it, rsl_rl restores the weights *and* the iteration counter, and `--agent.max-iterations` counts **additional** iterations (3,500 + 2,500 = 6,000). `cx1b6hgi` resumed correctly but wasn't in tmux → restarted in tmux as **`0j0flpxj`**
+- First logged iteration of a resume shows a bogus error_body_pos ~2.0 m (robots measured in their spawn pose before the first reset); from the next iteration it's back to the checkpoint's level. Ignore it
+
+**WandB cleanup** (via the API)
+- `mjlab`: deleted 12 aborted / duplicate runs (`s2adpiqw`, 7 setup attempts from 10-14, `gusmftiz`, `xzaq29gw`, `hhlreous`, `cx1b6hgi`); 12 runs left
+- Kept runs renamed `MM-DD what-it-is`, tagged (`velocity`/`tracking`, `single-clip`/`multi-clip`/`general`, `wave`/`beat2`, `keep`/`milestone`/`superseded`, `torso-ik`), with a one-line result note. Run IDs unchanged
+- `motion_upload`: every version has a description (bad / superseded / use this); aliases `pelvis-ik` (beat2 v2), `torso-ik` + `current` (beat2 v3), `current` on the wave clips. Old versions kept (runs reference them). `booster-mjlab` project is empty (delete in the web UI; the API can't)
+
 ## Next
 - Decide: include session-1 conversation takes (`additional`, ≈ +15 h Tier A); then download them (≈ 2.8 GB for training speakers)
 - Phase 2 once the v3 GMR config is set (`ik_config` in the spec): full build (~7k clips, est. 3–4 h on the laptop CPU), Gate 2 audit (Sophie `sophie_0_17_17_t30-47` right arm 5 cm behind in the smoke test), probe run
