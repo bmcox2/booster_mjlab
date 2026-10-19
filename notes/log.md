@@ -774,6 +774,11 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Fix: `K1MotionTrackingRunner` (`src/booster_mjlab/tasks/tracking/runner.py`) skips the bundled export when the motion is > 1 GiB (prints `[INFO] ... skipping the bundled ONNX export`), still saves `.pt` checkpoints and still links the motion artifact to the run (`play` / `eval-tracking` need it). Small sets export ONNX as before
 - Then the run trained slower than its ETA: per-clip metrics = ~30k (A) / ~44k (A+B) W&B keys, and rsl_rl's logger loops over every key each iteration (time not counted in `Iteration time` / ETA). `MultiMotionCommandCfg.per_clip_metrics_max_clips = 200` now turns per-clip logging off for big sets; per-clip results come from `eval-tracking`. Restarted both runs
 
+**Restarted A (y3k07rwu) died at it 244; reward/episode length collapse from ~it 200**
+- Crash: log ends at `Exception in thread Thread-1` (truncated); A+B then failed at import (`torch._dynamo` "already registered"). No OOM-killer entry in dmesg for it (the 11:28/11:29 ones were the ONNX-export kills, 28 GB RSS). Cause unknown: check `journalctl` (systemd-oomd; swap was 1.9/2.0 GB) and `tee` train output to a file from now on
+- Collapse: adaptive sampling fed back on one bin (`sampling_top1_prob` 0.001 → 0.39 at it 255). Bin = `lawrence_0_101_101_t42-55` ~11.8 s (QC: Left_Shoulder_Pitch jumps 0.46 rad in one frame, under the 0.6 limit). Same failure as 0lg80c7d
+- Fix: sampling safety harness in `MultiMotionCommand` (per-clip cap 20× length share, quarantine after 2400 steps at the cap, `flagged_clips.json`); `notes/multi-clip.md`. Tests 14/14. Rerun A and A+B with it (fair comparison: same sampler)
+
 **Artifacts** (`bmcox2-university-of-illinois-urbana-champaign/motion_upload/`; local copies in `~/robotics/data/beat2_full_torso/combined/`)
 - Training: `beat2-full-torso-train-a:v1`, `beat2-full-torso-train-b:v1` (**not `:v0`**: v0 still has the 25° trunk-lean clips)
 - Eval: `beat2-full-torso-val:v0`, `-heldout-val:v0` (unchanged by the lean fix), `-test:v1`, `-heldout-test:v1`, `-heldout-conv:v1`. `val` picks checkpoints; `test` is scored once at the end

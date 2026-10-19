@@ -15,6 +15,9 @@ Rules:
   (teleported to a new start), the same thing mjlab does at the end of its single clip.
 - Adaptive sampling uses ~1 s bins per clip (no bin spans two clips), pooled into one
   distribution over all clips.
+- Safety harness: no clip gets more than ``max_clip_share_ratio`` x its length share of starts;
+  a clip held at that cap for ``quarantine_after_steps`` is quarantined (no longer oversampled)
+  and listed in flagged_clips.json next to the checkpoints for review.
 - A file without a clip table is one clip, and then everything behaves exactly like mjlab's.
 
 Combined files are built by ``uv run combine-motions``. See notes/multi-clip.md.
@@ -60,6 +63,39 @@ def read_clip_table(motion_file: str | Path) -> tuple[list[str], np.ndarray]:
 def bins_per_clip(lengths: np.ndarray, steps_per_second: float) -> np.ndarray:
     """mjlab's adaptive-sampling bin count (whole seconds + 1, equal-size bins), applied per clip."""
     return np.array([int(n // steps_per_second) + 1 for n in lengths], dtype=np.int64)
+
+
+def limit_clip_shares(
+    probs: torch.Tensor,
+    bin_clip: torch.Tensor,
+    caps: torch.Tensor,
+    quarantined: torch.Tensor,
+    quarantined_bin_prob: float,
+    max_iters: int = 4,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Safety harness for adaptive sampling: no clip can take over the starts.
+
+    ``probs`` (per bin, sums to 1). Each quarantined clip's bins get ``quarantined_bin_prob``;
+    every other clip's total share is held at most ``caps[clip]``. Mass taken off goes to the
+    remaining clips in proportion. Returns (probs, capped clips). Unchanged when no clip is
+    quarantined or over its cap.
+    """
+    num_clips = caps.numel()
+    if bool(quarantined.any()):
+        q = quarantined[bin_clip]
+        probs = torch.where(q, quarantined_bin_prob, probs * (1 - quarantined_bin_prob * q.sum()) / probs[~q].sum())
+    capped = torch.zeros_like(quarantined)
+    for _ in range(max_iters):
+        share = torch.zeros(num_clips, dtype=probs.dtype, device=probs.device).index_add_(0, bin_clip, probs)
+        over = (share > caps * (1 + 1e-6)) & ~quarantined & ~capped
+        if not bool(over.any()):
+            break
+        probs = probs * torch.where(over, caps / share, 1.0)[bin_clip]
+        capped |= over
+        fixed = (quarantined | capped)[bin_clip]
+        free = probs[~fixed].sum().clamp_min(1e-12)
+        probs = torch.where(fixed, probs, probs * (1 - probs[fixed].sum()).clamp_min(0) / free)
+    return probs, capped
 
 
 def kernel_index(clip_bin_counts: torch.Tensor, kernel_size: int) -> torch.Tensor:
@@ -156,6 +192,16 @@ class MultiMotionCommand(MotionCommand):
         self._current_bin_failed = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
         self._kernel_index = kernel_index(self.clip_bin_counts, self.cfg.adaptive_kernel_size)
 
+        # Safety harness (limit_clip_shares): cap each clip's share of starts, quarantine clips
+        # that stay at the cap, and keep a record of them for review (flagged_clips.json).
+        length_share = self.clip_bin_counts.float() / self.bin_count
+        self.clip_share_caps = (self.cfg.max_clip_share_ratio * length_share).clamp(max=1.0)
+        self.clip_capped_steps = torch.zeros(self.num_clips, dtype=torch.long, device=self.device)
+        self.clip_quarantined = torch.zeros(self.num_clips, dtype=torch.bool, device=self.device)
+        self.flagged_clips: list[dict] = []
+        for name in ("sampling_capped_clips", "sampling_quarantined_clips", "sampling_top1_clip_share"):
+            self.metrics[name] = torch.zeros(self.num_envs, device=self.device)
+
     # ------------------------------------------------------------------ bookkeeping (new)
 
     def _sync_time_steps(self, env_ids: torch.Tensor | None = None) -> None:
@@ -172,10 +218,52 @@ class MultiMotionCommand(MotionCommand):
         return self.clip_bin_starts[clip_ids] + local
 
     def _sampling_probabilities(self) -> torch.Tensor:
-        """Adaptive-sampling distribution over all bins (mjlab's formula, smoothed within each clip)."""
+        """Adaptive-sampling distribution over all bins (mjlab's formula, smoothed within each
+        clip), then the safety harness: per-clip caps and quarantine (``limit_clip_shares``)."""
+        return self._limited_sampling_probabilities()[0]
+
+    def _limited_sampling_probabilities(self) -> tuple[torch.Tensor, torch.Tensor]:
         probs = self.bin_failed_count + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
         probs = (probs[self._kernel_index] * self.kernel).sum(dim=-1)
-        return probs / probs.sum()
+        probs = probs / probs.sum()
+        return limit_clip_shares(
+            probs,
+            self.bin_clip,
+            self.clip_share_caps,
+            self.clip_quarantined,
+            self.cfg.quarantine_share_ratio / self.bin_count,
+        )
+
+    def _update_quarantine(self, capped: torch.Tensor) -> None:
+        """Count how long each clip has been held at its cap; quarantine it past
+        ``quarantine_after_steps``. A clean clip gets oversampled for a while and then learned;
+        a broken one (retarget glitch, impossible pose) stays at the cap."""
+        self.clip_capped_steps = torch.where(capped, self.clip_capped_steps + 1, 0)
+        if self.cfg.quarantine_after_steps <= 0:
+            return
+        new = (self.clip_capped_steps >= self.cfg.quarantine_after_steps) & ~self.clip_quarantined
+        if not bool(new.any()):
+            return
+        for c in new.nonzero().flatten().tolist():
+            start, count = int(self.clip_bin_starts[c]), int(self.clip_bin_counts[c])
+            fails = self.bin_failed_count[start : start + count]
+            worst = int(fails.argmax())
+            worst_s = (worst + 0.5) / count * int(self.clip_lengths[c]) * self._env.step_dt
+            info = {
+                "clip": self.clip_names[c],
+                "env_step": int(self._env.common_step_counter),
+                "steps_at_cap": int(self.clip_capped_steps[c]),
+                "most_falls_near_s": round(worst_s, 1),
+                "fail_share": round(float(fails.sum() / self.bin_failed_count.sum().clamp_min(1e-12)), 4),
+            }
+            self.flagged_clips.append(info)
+            print(
+                f"[sampler] Quarantined {info['clip']}: held at its sampling cap for {info['steps_at_cap']} steps, "
+                f"most falls near {info['most_falls_near_s']} s ({100 * info['fail_share']:.1f}% of all falls). "
+                f"Now sampled at {self.cfg.quarantine_share_ratio:g}x its length share. Review it after training."
+            )
+            self.bin_failed_count[start : start + count] = 0.0
+        self.clip_quarantined |= new
 
     def clip_sampling_share(self) -> torch.Tensor:
         """(num_clips,) chance that a new start lands on each clip under the current sampling mode."""
@@ -230,7 +318,8 @@ class MultiMotionCommand(MotionCommand):
             fail_bins = self._bin_of(self.clip_ids[failed], self.clip_frames[failed])
             self._current_bin_failed += torch.bincount(fail_bins, minlength=self.bin_count)
 
-        sampling_probabilities = self._sampling_probabilities()
+        sampling_probabilities, capped = self._limited_sampling_probabilities()
+        self._update_quarantine(capped)
         sampled_bins = torch.multinomial(sampling_probabilities, len(env_ids), replacement=True)
         clips = self.bin_clip[sampled_bins]
         local_bins = sampled_bins - self.clip_bin_starts[clips]
@@ -250,6 +339,10 @@ class MultiMotionCommand(MotionCommand):
         self.metrics["sampling_entropy"][:] = H_norm
         self.metrics["sampling_top1_prob"][:] = pmax
         self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
+        clip_share = torch.zeros(self.num_clips, device=self.device).index_add_(0, self.bin_clip, sampling_probabilities)
+        self.metrics["sampling_top1_clip_share"][:] = clip_share.max()
+        self.metrics["sampling_capped_clips"][:] = capped.sum()
+        self.metrics["sampling_quarantined_clips"][:] = self.clip_quarantined.sum()
 
     def _resample_command(self, env_ids: torch.Tensor) -> None:
         """mjlab: pick a frame (by ``sampling_mode``), then teleport the robot onto the reference
@@ -406,6 +499,15 @@ class MultiMotionCommandCfg(MotionCommandCfg):
     """Skip per-clip logging above this many clips: rsl_rl's logger loops over every key each
     iteration (full BEAT2 = ~30k keys, seconds per iteration not counted in its ETA) and W&B
     can't chart that many. Use eval-tracking for per-clip results on big sets."""
+    max_clip_share_ratio: float = 20.0
+    """Safety harness: a clip gets at most this many times its length share of adaptive starts
+    (full BEAT2: a 13 s clip ~0.3%). Stops one bad clip from taking over (0lg80c7d: 70-77%;
+    10-19 full-A: one bin 39%). Never binds on a clip that is >= 1/20 of the data. inf: off."""
+    quarantine_after_steps: int = 2400
+    """Quarantine a clip held at its cap for this many steps in a row (~100 iterations). 0: never."""
+    quarantine_share_ratio: float = 1.0
+    """A quarantined clip's share of starts, as a multiple of its length share (0: never start
+    there). It stays in training but is no longer oversampled. Logged to flagged_clips.json."""
 
     @classmethod
     def from_motion_cfg(cls, cfg: MotionCommandCfg) -> MultiMotionCommandCfg:

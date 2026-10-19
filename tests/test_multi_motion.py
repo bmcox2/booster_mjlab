@@ -19,7 +19,12 @@ import pytest
 import torch
 
 import booster_mjlab.tasks  # noqa: F401, registers the K1 tasks
-from booster_mjlab.tasks.tracking.multi_motion_command import LeanMotionLoader, MultiMotionCommand, kernel_index
+from booster_mjlab.tasks.tracking.multi_motion_command import (
+    LeanMotionLoader,
+    MultiMotionCommand,
+    kernel_index,
+    limit_clip_shares,
+)
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
 from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg, MotionLoader
@@ -197,3 +202,65 @@ def test_lean_loader_matches_mjlab(cmd):
     for key in ("joint_pos", "joint_vel", "body_pos_w", "body_quat_w", "body_lin_vel_w", "body_ang_vel_w"):
         assert torch.equal(getattr(lean, key), getattr(full, key)), key
     assert not hasattr(lean, "_body_pos_w")
+
+
+# ---------------------------------------------------------------- safety harness
+
+
+def test_limit_clip_shares_caps_a_takeover():
+    """One clip with 90% of the failure mass is held at its cap; the rest is shared in proportion."""
+    bin_clip = torch.tensor([0, 0, 1, 1, 2, 2])
+    probs = torch.tensor([0.45, 0.45, 0.02, 0.03, 0.02, 0.03])
+    caps = torch.full((3,), 0.4)
+    none = torch.zeros(3, dtype=torch.bool)
+    out, capped = limit_clip_shares(probs, bin_clip, caps, none, 0.0)
+    share = torch.zeros(3).index_add_(0, bin_clip, out)
+    assert torch.isclose(out.sum(), torch.tensor(1.0))
+    assert torch.isclose(share[0], torch.tensor(0.4)) and capped.tolist() == [True, False, False]
+    assert torch.allclose(out[:2], torch.tensor([0.2, 0.2]))  # within the clip, the shape is kept
+    assert torch.allclose(out[2:] / out[2:].sum(), probs[2:] / probs[2:].sum())
+
+
+def test_limit_clip_shares_is_identity_when_nothing_binds():
+    bin_clip = torch.tensor([0, 0, 1, 1])
+    probs = torch.tensor([0.1, 0.2, 0.3, 0.4])
+    out, capped = limit_clip_shares(probs, bin_clip, torch.ones(2), torch.zeros(2, dtype=torch.bool), 0.0)
+    assert torch.equal(out, probs) and not capped.any()
+
+
+def test_limit_clip_shares_quarantine():
+    bin_clip = torch.tensor([0, 0, 1, 1])
+    probs = torch.tensor([0.4, 0.4, 0.1, 0.1])
+    quarantined = torch.tensor([True, False])
+    out, _ = limit_clip_shares(probs, bin_clip, torch.ones(2), quarantined, 0.05)
+    assert torch.allclose(out, torch.tensor([0.05, 0.05, 0.45, 0.45]))
+
+
+def test_failing_clip_is_capped_quarantined_and_logged(cmd):
+    """End to end on the real command: clip 1 fails constantly -> held at its cap -> quarantined,
+    listed in flagged_clips, and from then on sampled at its plain length share."""
+    caps, after = cmd.clip_share_caps.clone(), cmd.cfg.quarantine_after_steps
+    cmd.clip_share_caps = torch.full_like(caps, 0.6)
+    cmd.cfg.quarantine_after_steps = 3
+    b1 = slice(int(cmd.clip_bin_starts[1]), int(cmd.clip_bin_starts[1] + cmd.clip_bin_counts[1]))
+    try:
+        ids = torch.arange(NUM_ENVS)
+        for step in range(3):
+            cmd.bin_failed_count.zero_()
+            cmd.bin_failed_count[b1] = 100.0
+            assert not cmd.clip_quarantined[1]
+            cmd._adaptive_sampling(ids)
+            assert cmd.metrics["sampling_capped_clips"][0] == 1
+            assert torch.isclose(cmd.metrics["sampling_top1_clip_share"][0], torch.tensor(0.6))
+        assert cmd.clip_quarantined.tolist() == [False, True]
+        assert [f["clip"] for f in cmd.flagged_clips] == [cmd.clip_names[1]]
+        assert (cmd.bin_failed_count[b1] == 0).all()
+        cmd.bin_failed_count[b1] = 100.0  # still failing: no longer matters
+        length_share = float(cmd.clip_bin_counts[1]) / cmd.bin_count
+        assert torch.isclose(cmd.clip_sampling_share()[1], torch.tensor(length_share * cmd.cfg.quarantine_share_ratio))
+    finally:
+        cmd.clip_share_caps, cmd.cfg.quarantine_after_steps = caps, after
+        cmd.clip_quarantined.zero_()
+        cmd.clip_capped_steps.zero_()
+        cmd.flagged_clips.clear()
+        cmd.bin_failed_count.zero_()

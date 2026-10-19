@@ -116,6 +116,17 @@ while the others drop = that clip is hard (or the data is bad); its `sample_shar
 With many clips (hundreds of BEAT2 takes) each clip gets only a few resets per iteration, so its
 curves are noisy; smooth them in W&B.
 
+## Sampling safety harness
+
+Adaptive sampling weights each ~1 s bin by its recent falls plus a floor (`adaptive_uniform_ratio / bins`). The floor sums to 1.0 over *all* bins while the falls sum to hundreds, so in practice there is no floor, and it is a feedback loop: more starts on a bin → more falls there → more starts. One bad clip can take over (`0lg80c7d`: `wayne_0_9_9` 70–77% of starts; 10-19 full-A: one second of `lawrence_0_101_101_t42-55`, a 0.46 rad shoulder jump, 39%; reward and episode length crashed from ~it 200).
+
+The harness (`limit_clip_shares`, `MultiMotionCommandCfg`):
+- **Cap:** a clip gets at most `max_clip_share_ratio` (20) × its length share of starts (full BEAT2, 13 s clip: ~0.3%). Mass over the cap goes to the other clips in proportion. A real hard clip still gets 20× practice.
+- **Quarantine:** a clip held at its cap for `quarantine_after_steps` (2400 steps ≈ 100 iterations) in a row is quarantined: its fall counts are cleared and it is sampled at `quarantine_share_ratio` (1.0) × its length share for the rest of the run (0 = never start there). A clean hard clip gets learned and drops below the cap; a broken one stays there.
+- **Review list:** each quarantine prints `[sampler] Quarantined <clip> ... most falls near X s` and is written to `flagged_clips.json` next to the checkpoints (and the W&B run's files). Look at those seconds in `visualize-motions`; fix or drop the clip in the next dataset build.
+- **W&B:** `Metrics/motion/sampling_top1_clip_share` (biggest clip's share of starts), `sampling_capped_clips`, `sampling_quarantined_clips`. A rising quarantined count means the dataset has problems Gate 1 missed.
+- Off: `max_clip_share_ratio = inf` and `quarantine_after_steps = 0`. Quarantine state is not in checkpoints: a resumed run re-detects.
+
 ## Eval
 `eval-tracking` on a combined file gives one row per clip (see `eval-guide.md`). It sets the episode
 length from the longest clip (+1 s), so long clips are never cut short.

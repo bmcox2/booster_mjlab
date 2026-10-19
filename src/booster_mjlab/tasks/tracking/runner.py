@@ -7,10 +7,15 @@ CPU copy kills the process without a traceback. Above ``MAX_BUNDLED_MOTION_BYTES
 this runner saves the ``.pt`` checkpoint only (``play`` / ``eval-tracking`` load the
 ``.pt``) and still links the motion artifact to the W&B run, which ``play`` and
 ``eval-tracking`` use to find the motion when no ``--registry-name`` is given.
+
+It also writes ``flagged_clips.json`` (clips the sampling harness quarantined, see
+``MultiMotionCommand``) next to the checkpoints and to the W&B run's files.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import cast
 
 import wandb
@@ -31,6 +36,7 @@ class K1MotionTrackingRunner(MotionTrackingOnPolicyRunner):
 
     def save(self, path: str, infos=None) -> None:
         cmd = cast(MotionCommand, self.env.unwrapped.command_manager.get_term("motion"))
+        self._write_flagged_clips(cmd, Path(path).parent)
         size = motion_bytes(cmd.motion)
         if size <= MAX_BUNDLED_MOTION_BYTES:
             super().save(path, infos)
@@ -42,3 +48,13 @@ class K1MotionTrackingRunner(MotionTrackingOnPolicyRunner):
         if self.registry_name is not None and wandb.run is not None and self.cfg["upload_model"]:
             wandb.run.use_artifact(self.registry_name)
             self.registry_name = None
+
+    @staticmethod
+    def _write_flagged_clips(cmd: MotionCommand, log_dir: Path) -> None:
+        flagged = getattr(cmd, "flagged_clips", None)
+        if not flagged:
+            return
+        out = log_dir / "flagged_clips.json"
+        out.write_text(json.dumps(flagged, indent=2))
+        if wandb.run is not None:
+            wandb.save(str(out), base_path=str(log_dir), policy="live")
