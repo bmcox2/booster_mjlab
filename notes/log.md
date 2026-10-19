@@ -748,21 +748,23 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - **Laptop heat:** numpy threads × 10 workers pinned the CPU at 100 °C. Single-thread workers (`OMP_NUM_THREADS=1`) + a profile-cycling governor (balanced until chassis 65 °C, power-saver until 52 °C; ~3× power-saver speed) + watchdog. One core at full turbo always reads 100 °C on this laptop; chassis sensors are the real limit. Run future builds on the club PC
 - `pkill -f`/`pgrep -f` matched their own shell twice (killed or stopped the command): use PIDs or `[x]`-patterns
 
-**Build:** 1,378 takes → 16,155 clips, 45 h (segments → convert → GMR → ground → QC → combine). Gate 1 recalibrated on the full build (arm-behind severe only > 10 cm: 77% of flags were Sophie's clasped hands just past 5 cm; trunk-drop outlier severe only > 5 cm; self-overlap severe only > 25 mm) → **1,167 severe excluded** (GMR flips, ground IK failures 672, feet crossing, 84 real left-arm-behind). QC table `notes/beat2-full-qc.md`
+**Build:** 1,378 takes → 16,155 clips, 45 h (segments → convert → GMR → ground → QC → combine). Gate 1 recalibrated on the full build (arm-behind severe only > 10 cm: 77% of flags were Sophie's clasped hands just past 5 cm; trunk-drop outlier severe only > 5 cm; self-overlap severe only > 25 mm) → 1,167 severe (GMR flips, ground IK failures 672, feet crossing, 84 real left-arm-behind)
+- **Missed by Gate 1, found before training: whole-clip trunk lean.** Two Hailing conversation takes (`23_hailing_1_2_2`, `_1_3_3`) have the pelvis ~33° from vertical for the whole take (head only 10 cm lower: a mocap offset or leaning on something); with the torso config the K1 trunk copies it at 25°. Over all clips the K1's median trunk tilt is 5° (p99 23°, max 136°). New severe check `trunk leans > 15°` (median over the clip): 251 clips → **1,290 severe excluded**. `:v0` artifacts contain these clips; use **`:v1`**. QC table `notes/beat2-full-qc.md`
+- Load test: the training env builds from train-a:v1 on CPU in 10 s (7,223 clips, 87,604 bins, 6.18 GB of reference tensors, peak RSS 10 GB), 60 steps fine
 
 | set | clips | hours |
 |---|---|---|
-| train-a (Tier A, train + conversation takes, 19 speakers) | 7,310 | 23.6 |
-| train-b (Tier B) | 3,668 | 5.8 |
-| val / heldout-val | 474 / 194 | 1.3 / 0.8 |
-| test / heldout-test | 1,300 / 411 | 3.5 / 1.4 |
-| heldout-conv | 1,631 | 5.9 |
+| train-a:v1 (Tier A, train + conversation takes, 19 speakers) | 7,223 | 23.3 |
+| train-b:v1 (Tier B) | 3,644 | 5.7 |
+| val:v0 / heldout-val:v0 | 474 / 194 | 1.3 / 0.8 |
+| test:v1 / heldout-test:v1 | 1,298 / 406 | 3.5 / 1.4 |
+| heldout-conv:v1 | 1,626 | 5.9 |
 
-- Leakage check clean on both training files. Uploaded `beat2-full-torso-train-a` / `-train-b` (`tools/upload_combined.py`, 11 MB/s); eval sets not uploaded yet
+- Leakage check clean on both training files. Uploaded with `tools/upload_combined.py` (~6–11 MB/s); club PC: 91 GB free (disk 95% full, shared): clean up downloads after
 
 ## Next
 - Comparison runs on the club GPU (same seed, 6k it, entropy_coef 0.001): A = train-a, A+B = train-a + train-b (combine-motions locally). Then eval on val / heldout-val per tier and per speaker
-- Upload the eval sets (val, heldout-val, test, heldout-test, heldout-conv)
+- Gate 2 visual audit before any final run (step-lift arcs, conversation takes, Tier B); the comparison runs double as the Gate 3 probe
 - ground_clip IK failures (672 clips, mostly Tier B / conversations) and 84 clips with the left arm > 10 cm behind (IK-start bug back?): look before the v3 rebuild
 - Gate 2: histograms per split, visual audit of 20 random + worst clips
 - v3 GMR config → rebuild into a new out_dir (on the club PC)

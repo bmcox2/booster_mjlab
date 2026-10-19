@@ -64,6 +64,10 @@ LIMITS = {
     # Trunk turning > 6 deg in 1/30 s. Real motion stayed <= 4 deg/frame; GMR's flips turned the trunk
     # 7.6-33 deg in one frame while the human pelvis turned < 5 deg (calibration on v1 and torso clips).
     "root_turn_deg": 6.0,
+    # Trunk lean: the K1 trunk's median tilt from vertical over the clip. Normal speakers ~5 deg
+    # (99th pct 23); two Hailing conversation takes have the pelvis tilted ~33 deg for the whole take
+    # (a mocap offset or leaning on something) and the K1 copies it at 25 deg; max 136 deg. Severe.
+    "trunk_lean_deg": 15.0,
     # joint speed above the no-load limit for longer than this
     "speed_run_s": 0.1,
     # floor: lowest collision point below the floor
@@ -113,6 +117,12 @@ LIMIT_KINDS = (
 # Feet are left out of the outlier test: K1 foot motion is ~1 cm for most clips with a long tail of
 # normal weight shifts; the fixed feet_k1_cm limit covers them.
 MAD_FLOOR = {"arms_k1_cm_s": 2.0, "trunk_drop_cm": 0.5, "knee_max_deg": 3.0}
+
+
+def R_from_xyzw(q: np.ndarray) -> np.ndarray:
+    """(T, 4) scipy-order (x, y, z, w) quaternions -> (T, 3, 3) rotation matrices."""
+    from scipy.spatial.transform import Rotation
+    return Rotation.from_quat(q).as_matrix()
 
 
 def longest_run(mask: np.ndarray) -> tuple[int, int]:
@@ -189,6 +199,8 @@ class K1Checker:
         step = np.abs(np.diff(dof, axis=0))
         jf, jj = np.unravel_index(step.argmax(), step.shape)
         root_step = np.linalg.norm(np.diff(root_pos, axis=0), axis=1)
+        trunk_up = R_from_xyzw(root_rot) @ np.array([0.0, 0.0, 1.0])
+        lean = np.degrees(np.arccos(np.clip(trunk_up[:, 2], -1.0, 1.0)))
         q = root_rot / np.linalg.norm(root_rot, axis=1, keepdims=True)
         turn = np.degrees(2 * np.arccos(np.clip(np.abs(np.sum(q[1:] * q[:-1], axis=1)), 0, 1)))
         vel = step * fps
@@ -233,6 +245,8 @@ class K1Checker:
             "joint_jump_at": [self.joint_names[jj], float((jf + 1) / fps)],
             "root_jump_cm": float(root_step.max() * 100),
             "root_turn_deg": float(turn.max()),
+            "trunk_lean_deg": float(np.median(lean)),           # median tilt of the trunk from vertical
+            "trunk_lean_p95_deg": float(np.percentile(lean, 95)),
             "speed_ratio_max": float(ratio.max()),          # fastest joint / its no-load speed
             "speed_ratio_at": [self.joint_names[rj], float((rf + 1) / fps)],
             "speed_over_s": runs[sj][0] / fps,               # longest stretch above the no-load speed
@@ -313,6 +327,8 @@ def flag(rows: list[dict], limits: dict | None = None) -> None:
             add(f"root jump {r['root_jump_cm']:.1f} cm/frame", True)
         if r["root_turn_deg"] > L["root_turn_deg"]:
             add(f"root turn {r['root_turn_deg']:.0f} deg/frame", True)
+        if r.get("trunk_lean_deg", 0.0) > L["trunk_lean_deg"]:
+            add(f"trunk leans {r['trunk_lean_deg']:.0f} deg (median)", True)
         if r["speed_over_s"] > L["speed_run_s"]:
             joint, t = r["speed_over_at"]
             add(f"{joint} over its speed limit for {r['speed_over_s']:.2f} s (at {t:.1f} s)", True)
