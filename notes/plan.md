@@ -34,36 +34,36 @@ hit them, not just at the end.
 
 ## A. Get BEAT2
 
-- [ ] Accept the license and download **one or two English speakers only** (SMPL-X motion
+- [x] Accept the license and download **one or two English speakers only** (SMPL-X motion
   + matching audio), not all 60 hours.
-- [ ] Read the dataset README and open one motion file. Note:
+- [x] Read the dataset README and open one motion file. Note:
   - frame rate
   - which way is up (Y-up or Z-up; AMASS is Z-up)
   - what the file keys and body-shape size are, compared with an AMASS SMPL-X file GMR already reads
   - how motion files pair with audio files (same name? same start time?)
-- [ ] Note typical clip lengths. They'll be much longer than the 3–4 s waves.
+- [x] Note typical clip lengths. They'll be much longer than the 3–4 s waves.
 
 **Done when:** you can say exactly how a BEAT2 motion file differs from the AMASS files GMR
 already accepts.
 
 ## B. Pick a clip
 
-- [ ] Listen to and watch a few clips. Pick one where the speaker:
+- [x] Listen to and watch a few clips. Pick one where the speaker:
   - stands in place (few or no steps)
   - gestures clearly with the arms (beats, open palms) and moves the head
   - doesn't rely mainly on fingers or wrist twists
-- [ ] Choose a **20–30 s window** with clear speech. Use the full clip later, as a stretch goal.
-- [ ] Record the speaker, file, and frame/time range in the log, so the audio can be cut
+- [x] Choose a **20–30 s window** with clear speech. Use the full clip later, as a stretch goal.
+- [x] Record the speaker, file, and frame/time range in the log, so the audio can be cut
   to exactly the same window later.
 
 **Done when:** one clip and window are picked and logged.
 
 ## C. Retarget with GMR
 
-- [ ] Check whether GMR reads the BEAT2 file as-is. If not, write a small converter to the
+- [x] Check whether GMR reads the BEAT2 file as-is. If not, write a small converter to the
   AMASS-style format (axis convention, body-shape size, frame-rate field). Most of the
   risk in this phase is here.
-- [ ] Retarget and watch it in GMR's viewer. Check:
+- [x] Retarget and watch it in GMR's viewer. Check:
   - Does it still look like someone talking, or just like idling? Small motions may nearly
     disappear at K1 scale.
   - Do head nods and turns come through? The head is the K1's extra channel.
@@ -74,43 +74,43 @@ already accepts.
 
 ## D. Ground, verify, upload
 
-- [ ] Run `ground_clip` on it. **New risk:** it plants both feet and flattens stance feet,
+- [x] Run `ground_clip` on it. **New risk:** it plants both feet and flattens stance feet,
   but talking has weight shifts and small steps. Check whether it turns those into foot
   sliding, knee pops, or an error.
-- [ ] Watch it in `visualize-motions`: feet on the floor, no sliding, no self-collision, no
+- [x] Watch it in `visualize-motions`: feet on the floor, no sliding, no self-collision, no
   flipped joints.
-- [ ] Upload and save the artifact name in the log.
+- [x] Upload and save the artifact name in the log.
 
 **Done when:** the grounded window plays cleanly in booster_mjlab.
 
 ## E. Train
 
-- [ ] Train the single-clip tracker on the 20–30 s window, the same task as the waves.
-- [ ] Budget more iterations than the waves' 2,500, since there's ~8× more motion to learn.
+- [x] Train the single-clip tracker on the 20–30 s window, the same task as the waves.
+- [x] Budget more iterations than the waves' 2,500, since there's ~8× more motion to learn.
   Use `wandb-guide.md` / `/analyze-run` to decide when to stop, not a fixed count.
-- [ ] Watch for parts of the clip that keep failing (DeepMimic-style early termination
+- [x] Watch for parts of the clip that keep failing (DeepMimic-style early termination
   plus adaptive start sampling will keep sending training back to the hard parts).
-- [ ] Check the GPU temperature. If the window needs hours, it's a club GPU job.
+- [x] Check the GPU temperature. If the window needs hours, it's a club GPU job.
 
 **Done when:** reward and errors level off with terminations near zero.
 
 ## F. Evaluate
 
-- [ ] Before trusting `eval-tracking`, check that it handles a clip longer than the training
+- [x] Before trusting `eval-tracking`, check that it handles a clip longer than the training
   episode length (it was built and tested on 3–4 s clips).
-- [ ] Run it. Compare with the waves: falls, hand error, joint error, foot tilt, and
+- [x] Run it. Compare with the waves: falls, hand error, joint error, foot tilt, and
   especially **drift** (it was ~3 cm over 3 s; does it keep growing over 30 s?).
-- [ ] Note *when* in the clip failures and error spikes happen, and what the speaker is
+- [x] Note *when* in the clip failures and error spikes happen, and what the speaker is
   doing at those moments.
-- [ ] Watch `play` at real speed for jitter and foot shuffling. If it's visibly jittery but
+- [x] Watch `play` at real speed for jitter and foot shuffling. If it's visibly jittery but
   the numbers look fine, note that eval needs a smoothness metric (feeds step 1).
 
 **Done when:** numbers are logged next to the waves' table, with notes on where it struggles.
 
 ## G. Video with audio
 
-- [ ] Record the sim with `play`'s recording option.
-- [ ] Cut the original audio to the same window and dub it onto the video.
+- [x] Record the sim with `play`'s recording option.
+- [x] Cut the original audio to the same window and dub it onto the video.
 - [ ] Check sync at a sharp moment (a stressed word with a beat gesture). If it's off, check
   frame rates (BEAT2 vs the K1 clip) and the start offset.
 - [ ] Optional: a side-by-side with the human reference.
@@ -139,7 +139,12 @@ generated motion will ask of the tracker.
   - smoothness / jitter
   - lost DoF (wrists, fingers, waist) and whether the motion still reads as talking
   - (from H) generated vs mocap differences
-- [ ] Update `CLAUDE.md` status.
+- [x] Update `CLAUDE.md` status.
+
+## Status (2026-10-18)
+- A–F done (see `log.md`, 2026-10-16/17). The window is **10 s**, not 20–30 s: Scott steps every 5–10 s, so no longer still window exists (`--find-still`). The general tracker (`0j0flpxj` model_5999) tracks 146 such clips, so criterion 1 is met in spirit
+- G: video recorded and dubbed (`0j0flpxj` model_5999, torso IK, `talk_scott_1_1_t34-44-torso:v0`): "considerably better and more natural, the lean back is gone". Sync check still to do
+- Left: sync check (G), the "what step 1 must handle" list (I), EMAGE (H, optional), admin (0, Boston)
 
 ## Slice 0 is done when
 

@@ -729,10 +729,18 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - The torso IK config improves posture, tracking, generalization and feet at once: keep it as the default retarget for the K1
 - Late-run mean_std drift is now reproducible (2 runs). Next long run: lower `entropy_coef` (`rl_cfg.py`, 0.005 → ~0.001) or cap the std, instead of picking checkpoints around it
 
+## 2026-10-18: Slice 0 video with the torso policy: lean fixed
+
+- Single-clip torso version of the Scott clip: `talk_scott_1_1_t34-44-torso:v0` (trunk lean mean −6.0° [−25, +21] vs −15.1° [−34, +2] in `talk_scott_1_1_t34-44-tracking:v0`)
+- Club GPU: `uv run play Mjlab-Tracking-Flat-Booster-K1 --wandb-run-path .../0j0flpxj --wandb-checkpoint-name model_5999.pt --registry-name .../talk_scott_1_1_t34-44-torso:v0 --num-envs 1 --video True --video-length 500 --hide-overlays` → `logs/rsl_rl/k1_tracking/wandb_checkpoints/0j0flpxj/videos/play/rl-video-step-0.mp4`; scp to the laptop, `ffmpeg ... -c:v copy -c:a aac -shortest` with `scott_0_1_1_t34-44.wav` → `logs/videos/0j0flpxj_scott_audio.mp4`; before/after: `ffmpeg ... hstack` → `logs/videos/scott_before_after.mp4`
+- Boston: **"considerably better and more natural. The weird lean back is gone."**
+- Gotchas: shell variables like `$R` exist only in the shell that set them (on the laptop `$R` was empty → "Unrecognized options: model_5500.pt"). Laptop dGPU still off the PCI bus: `play` works on CPU, evals go to the club GPU
+- Slice 0 (`plan.md`): A–G done except the sync check; left: sync check, the "what step 1 must handle" list, EMAGE (optional)
+
 ## Next
 - Decide: include session-1 conversation takes (`additional`, ≈ +15 h Tier A); then download them (≈ 2.8 GB for training speakers)
 - Phase 2 once the v3 GMR config is set (`ik_config` in the spec): full build (~7k clips, est. 3–4 h on the laptop CPU), Gate 2 audit (Sophie `sophie_0_17_17_t30-47` right arm 5 cm behind in the smoke test), probe run
-- Re-record the Scott video with `0j0flpxj` model_5999 (needs a single-clip v3 `talk_scott` file) to confirm the lean is fixed
+- Slice 0 wrap-up: check audio sync on a stressed word; write the "what step 1 must handle" list (`plan.md` I)
 - Optional: train-set eval of model_5999
 - Next general run: lower `entropy_coef` (0.005 → ~0.001) to stop the late mean_std drift
 - QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
