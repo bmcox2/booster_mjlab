@@ -658,10 +658,43 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Self-collision: no arm–trunk overlaps; only hand into hip/thigh (≤ 25 mm, `scott_0_1_1_t34-44` 0.6 s, trained 50/50) → info only; any other pair severe
 - Severe on v1: 8 (4 flips, Ayana flip, Lawrence slide, wayne arm-behind, lawrence trunk drop). "Little arm motion" flag dropped (no arm floor now)
 
+## 2026-10-18: run fsyy1c2w on torso data (v3): same pace, better held-out tracking
+
+**Run**
+- Club GPU. WandB run `fsyy1c2w` (`beat2-general-v3`), `beat2-10s-train:v3`, 4096 envs, planned 10k it; **stopped by accident at 3,708 it** (1.1 h). Last checkpoint `model_3500.pt`
+- Speed 133–141k env-steps/s (s5cdzms7: 160k), 45k right before the stop: something else was probably on the club GPU
+
+**Training charts vs s5cdzms7 (v2) at the same iteration** (raw medians ±150 it)
+
+| | 1k | 2.5k | ~3.7k (s5: 4k) |
+|---|---|---|---|
+| error_body_pos v3 / v2 (m) | 0.0173 / 0.0166 | 0.0129 / 0.0127 | 0.0126 / 0.0123 |
+| error_joint_pos v3 / v2 | 0.49 / 0.49 | 0.32 / 0.32 | 0.31 / 0.31 |
+
+- Healthy: episode length 500, ~0 terminations, sampling_top1 ≤ 0.012, mean_std 0.19. Torso data is no harder to learn
+
+**Eval** (held-out, same iteration: `uv run eval-tracking --wandb-run-path .../fsyy1c2w --checkpoint-name model_3500.pt --registry-name .../beat2-10s-heldout:v3 --device cuda:0`; s5cdzms7 model_3500 on `:v2`)
+
+| Held-out | fsyy1c2w model_3500 (v3) | s5cdzms7 model_3500 (v2) | s5cdzms7 model_8500 (v2) |
+|---|---|---|---|
+| Hand err all (cm) | **3.08** | 3.42 | 3.05 |
+| Nidal / Ayana | **2.44 / 4.41** | 2.52 / 5.29 | 2.3 / 4.6 |
+| Body err (cm) / head joints | **0.88 / 2.6°** | 1.06 / 3.3° | |
+| Clips 50/50 | 42/43 | 43/43 | 42/43 |
+| Clips with foot tilt > 10° / worst | 13 / 19.6° | 12 / 41.6° | |
+
+- v3 better on 29/43 clips (mean −0.34 cm); most gain on Ayana. Only failures: `ayana_0_14_14_t36-46` 48/50 at 7.2–8.7 s (`anchor_pos`, `ee_body_pos`), the clip where s5cdzms7 model_8500 also failed once
+- **model_3500 on torso data ≈ the best v2 policy (model_8500)** with less than half the training, and its reference leans like the human
+
+**Takeaways**
+- The torso IK config is strictly better: more human-like posture and easier to track (CoM over the feet)
+- s5cdzms7 gained ~10% from 3.5k to 8.5k; resuming fsyy1c2w to ~6k should give the best general tracker so far
+
 ## Next
 - Decide: include session-1 conversation takes (`additional`, ≈ +15 h Tier A); then download them (≈ 2.8 GB for training speakers)
 - Phase 2 once the v3 GMR config is set (`ik_config` in the spec): full build (~7k clips, est. 3–4 h on the laptop CPU), Gate 2 audit (Sophie `sophie_0_17_17_t30-47` right arm 5 cm behind in the smoke test), probe run
-- Train on `beat2-10s-train:v3` (10k it, club GPU), eval on `:v3` train / held-out (+ `--push`) vs `s5cdzms7` model_8500; re-record the Scott video (lean). Note v3 train has 2 more clips than v2
+- Resume `fsyy1c2w` from model_3500 for 2,500 it (`--wandb-run-path .../fsyy1c2w --wandb-checkpoint-name model_3500.pt --agent.max-iterations 2500`; check it starts at ~3,500), then full evals on `:v3` (train, held-out, `--push`)
+- Re-record the Scott video with the v3 policy (needs a single-clip v3 `talk_scott` file) to confirm the lean is fixed
 - QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
 - `play` `s5cdzms7` model_8500: arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip
 - Foot tilt (> 10° on most Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
