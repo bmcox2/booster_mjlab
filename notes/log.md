@@ -779,6 +779,14 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Collapse: adaptive sampling fed back on one bin (`sampling_top1_prob` 0.001 → 0.39 at it 255). Bin = `lawrence_0_101_101_t42-55` ~11.8 s (QC: Left_Shoulder_Pitch jumps 0.46 rad in one frame, under the 0.6 limit). Same failure as 0lg80c7d
 - Fix: sampling safety harness in `MultiMotionCommand` (per-clip cap 20× length share, quarantine after 2400 steps at the cap, `flagged_clips.json`); `notes/multi-clip.md`. Tests 14/14. Rerun A and A+B with it (fair comparison: same sampler)
 
+**Run A with the harness: `wbitlbqw` (`2026-10-19_16-40-40_10-19-beat2-full-A`)**
+- Healthy at it 1,809: reward 63 (old runs peaked ~45 then collapsed), episode length ~500/500, error_body_pos 1.9 cm, mean_std 0.126 and still falling, top clip share ≤ 0.005 throughout. No collapse at it 200
+- 100 clips quarantined (1.4% of 7,223; 96 in the it-~1,800 `flagged_clips.json`). Median quarantine at it ~390, almost none after it 1,000
+- Flagged vs all clips (QC): bigger one-frame joint jumps (median 0.23 vs 0.14 rad), faster joints, more time at joint limits (p90 22% vs 4%), more root turn and foot slide; QC flags 'outlier knee' 6x and 'shoulder at limit' 9x over-represented. Half (50/96) fall within 1.5 s of the clip's biggest joint jump. Speakers: Katya 6.3%, Lawrence 4.5%, Zhao 4.2%; Sophie 0/935, Wayne 3/934. Conversation takes not over-represented (54% vs 56%)
+- A stricter QC joint-jump limit would not replace the harness: > 0.4 rad drops 102 clips but catches only 17/96 flagged; > 0.3 drops 342 for 34/96
+- Harness calibration (change only after A+B, same sampler for the comparison): the cap counter counts sampling calls (several per env step), so 2400 ≈ 40-50 iterations, not 100; no warm-up (3 clips quarantined before it 150, first at it 57). Next: count per env step, no quarantine before ~it 300
+- Fall points sit late in flagged clips (median 72% through): check whether Tier A segment ends cut into step onsets
+
 **Artifacts** (`bmcox2-university-of-illinois-urbana-champaign/motion_upload/`; local copies in `~/robotics/data/beat2_full_torso/combined/`)
 - Training: `beat2-full-torso-train-a:v1`, `beat2-full-torso-train-b:v1` (**not `:v0`**: v0 still has the 25° trunk-lean clips)
 - Eval: `beat2-full-torso-val:v0`, `-heldout-val:v0` (unchanged by the lean fix), `-test:v1`, `-heldout-test:v1`, `-heldout-conv:v1`. `val` picks checkpoints; `test` is scored once at the end
