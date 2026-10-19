@@ -769,6 +769,10 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - W&B names get a timestamp prefix: `2026-10-19_<HH-MM-SS>_10-19-beat2-full-A` / `..._10-19-beat2-full-AB`. Three earlier attempts crashed at startup with CUDA OOM because another user's job (`keshav`, `train_router.py`, 10.4 GB) held the GPU: **`2h7ih3ij`, `kxzph3yx`, `vbsmv80n` are dead** (tagged `oom-crashed`, `superseded`; W&B may show them "running" until it times them out). The real runs are the ones with steps climbing
 - Shared GPU: before a run, `nvidia-smi`; A needs ~10 GB (6.2 GB reference + sim), A+B ~11.7 GB, so neither fits next to another 10 GB job. Queue with `until [ "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits)" -lt 1000 ]; do sleep 120; done; <train ...>`
 
+**Runs died after iteration 0 (fixed Oct 19, 11:30)**
+- Not the GPU: mjlab's tracking runner exports an ONNX policy with the whole reference motion bundled in at every save (iteration 0 included). Full BEAT2 = several GB, over ONNX's 2 GB limit, and the CPU copy kills the process with no traceback. The overnight `;` chain died the same way
+- Fix: `K1MotionTrackingRunner` (`src/booster_mjlab/tasks/tracking/runner.py`) skips the bundled export when the motion is > 1 GiB (prints `[INFO] ... skipping the bundled ONNX export`), still saves `.pt` checkpoints and still links the motion artifact to the run (`play` / `eval-tracking` need it). Small sets export ONNX as before
+
 **Artifacts** (`bmcox2-university-of-illinois-urbana-champaign/motion_upload/`; local copies in `~/robotics/data/beat2_full_torso/combined/`)
 - Training: `beat2-full-torso-train-a:v1`, `beat2-full-torso-train-b:v1` (**not `:v0`**: v0 still has the 25° trunk-lean clips)
 - Eval: `beat2-full-torso-val:v0`, `-heldout-val:v0` (unchanged by the lean fix), `-test:v1`, `-heldout-test:v1`, `-heldout-conv:v1`. `val` picks checkpoints; `test` is scored once at the end
