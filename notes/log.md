@@ -702,17 +702,44 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Kept runs renamed `MM-DD what-it-is`, tagged (`velocity`/`tracking`, `single-clip`/`multi-clip`/`general`, `wave`/`beat2`, `keep`/`milestone`/`superseded`, `torso-ik`), with a one-line result note. Run IDs unchanged
 - `motion_upload`: every version has a description (bad / superseded / use this); aliases `pelvis-ik` (beat2 v2), `torso-ik` + `current` (beat2 v3), `current` on the wave clips. Old versions kept (runs reference them). `booster-mjlab` project is empty (delete in the web UI; the API can't)
 
+## 2026-10-18: run 0j0flpxj (torso data, resumed to 6k): best general tracker so far
+
+**Run**
+- Resume of `fsyy1c2w` from model_3500: `uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name .../beat2-10s-train:v3 --env.scene.num-envs 4096 --agent.resume True --wandb-run-path .../fsyy1c2w --wandb-checkpoint-name model_3500.pt --agent.max-iterations 2500 --agent.run-name beat2-general-v3-resume` (tmux, club GPU), 3.5k → 6k it, 51 min, ~160k env-steps/s
+- Reward ~65.3, episode length 500, ~0 terminations, sampler even (top1 ≤ 0.018), every clip fail_rate 0
+- Best stretch 5.0–5.5k: error_body_pos 0.0117 m, joint 0.28, action_rate −0.16. **mean_std drifted 0.173 → 0.211 from ~5.6k** (s5cdzms7: from ~6.9k), errors and action_rate up with it; run ended in the dip
+- Verdict: done. WandB: `10-18 general v3 torso-IK resume to 6k`, tag `keep`
+
+**Eval** (club GPU; model_5500 and model_5999 on `beat2-10s-heldout:v3`, model_5500 on train `:v3` and held-out `--push`)
+
+| Held-out | model_5999 | model_5500 | s5cdzms7 model_8500 (v2) |
+|---|---|---|---|
+| Clips 50/50 | **43/43** | 42/43 | 42/43 |
+| Hand err all (cm) | 2.85 | **2.73** | 3.05 |
+| Nidal / Ayana | 2.02 / 4.58 | **1.89 / 4.46** | 2.29 / 4.62 |
+| Body err / arms / head | 0.82 cm / 3.2° / 3.4° | 0.84 / 3.3° / 2.8° | 0.91 / 3.8° / 3.0° |
+| Clips with foot tilt > 10° / worst | 12 / 23° | 9 / 51° | 20 / 28° |
+
+- model_5500's 3 failures (5.7–6.6 s, `ee_body_pos`) and the 51° tilt are all on `ayana_0_14_14_t36-46` (5/50 rollouts > 30°); model_5999 does that clip 50/50, hand 4.3 cm, tilt ≤ 10°. Elsewhere 5500 is slightly better (5999 better on 14/43 clips, +0.13 cm mean)
+- **Use model_5999** (all clips pass, no extreme foot roll; costs 0.12 cm)
+- model_5500 train `:v3`: 101/105 clips, 5244/5250 (5 at t ≤ 0.12 s on the 3 known start-of-clip clips + `miranda_0_9_9_t0-10` at 6.5 s), hands 2.53 cm (Scott 3.73, Wayne 2.17, Solomon 3.05, Lawrence 2.88, Sophie 2.15, Miranda 2.64), foot tilt > 10° on 45/105 (s5cdzms7 v2: 54/103). Pushes: no change (2.73 cm, 1 failure)
+- Torso data vs pelvis data: held-out hands −10% (better on 32/43 clips), **Nidal at single-clip level (~1.9 cm)**, foot-tilt clips roughly halved on held-out, train/held-out gap 2.53 / 2.73 cm (was 2.46 / 3.05)
+
+**Takeaways**
+- The torso IK config improves posture, tracking, generalization and feet at once: keep it as the default retarget for the K1
+- Late-run mean_std drift is now reproducible (2 runs). Next long run: lower `entropy_coef` (`rl_cfg.py`, 0.005 → ~0.001) or cap the std, instead of picking checkpoints around it
+
 ## Next
 - Decide: include session-1 conversation takes (`additional`, ≈ +15 h Tier A); then download them (≈ 2.8 GB for training speakers)
 - Phase 2 once the v3 GMR config is set (`ik_config` in the spec): full build (~7k clips, est. 3–4 h on the laptop CPU), Gate 2 audit (Sophie `sophie_0_17_17_t30-47` right arm 5 cm behind in the smoke test), probe run
-- Resume `fsyy1c2w` from model_3500 for 2,500 it (`--wandb-run-path .../fsyy1c2w --wandb-checkpoint-name model_3500.pt --agent.max-iterations 2500`; check it starts at ~3,500), then full evals on `:v3` (train, held-out, `--push`)
-- Re-record the Scott video with the v3 policy (needs a single-clip v3 `talk_scott` file) to confirm the lean is fixed
+- Re-record the Scott video with `0j0flpxj` model_5999 (needs a single-clip v3 `talk_scott` file) to confirm the lean is fixed
+- Optional: train-set eval of model_5999
+- Next general run: lower `entropy_coef` (0.005 → ~0.001) to stop the late mean_std drift
 - QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
 - `play` `s5cdzms7` model_8500: arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip
 - Foot tilt (> 10° on most Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
 - The 3 clips that fail at t = 0.1 s in eval (`lawrence_0_12_12_t26-36`, `lawrence_0_13_13_t21-31`, `solomon_0_15_15_t43-53`): look at their first frames
 - More speakers (BEAT2 has more) to shrink the Ayana gap
-- If late-run noise drift repeats: lower `entropy_coef` (0.005, `rl_cfg.py`) or cap the policy std
 - If hands still well above single-clip: try future reference frames in the obs and/or a bigger network
 - Foot tilt 10–38° on many clips: look in `play`, then consider a foot-flatness reward
 - `play` `0lg80c7d` on `scott_0_1_1_t34-44` and a Lawrence clip (arms, foot roll)
