@@ -772,6 +772,7 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 **Runs died after iteration 0 (fixed Oct 19, 11:30)**
 - Not the GPU: mjlab's tracking runner exports an ONNX policy with the whole reference motion bundled in at every save (iteration 0 included). Full BEAT2 = several GB, over ONNX's 2 GB limit, and the CPU copy kills the process with no traceback. The overnight `;` chain died the same way
 - Fix: `K1MotionTrackingRunner` (`src/booster_mjlab/tasks/tracking/runner.py`) skips the bundled export when the motion is > 1 GiB (prints `[INFO] ... skipping the bundled ONNX export`), still saves `.pt` checkpoints and still links the motion artifact to the run (`play` / `eval-tracking` need it). Small sets export ONNX as before
+- Then the run trained slower than its ETA: per-clip metrics = ~30k (A) / ~44k (A+B) W&B keys, and rsl_rl's logger loops over every key each iteration (time not counted in `Iteration time` / ETA). `MultiMotionCommandCfg.per_clip_metrics_max_clips = 200` now turns per-clip logging off for big sets; per-clip results come from `eval-tracking`. Restarted both runs
 
 **Artifacts** (`bmcox2-university-of-illinois-urbana-champaign/motion_upload/`; local copies in `~/robotics/data/beat2_full_torso/combined/`)
 - Training: `beat2-full-torso-train-a:v1`, `beat2-full-torso-train-b:v1` (**not `:v0`**: v0 still has the 25° trunk-lean clips)

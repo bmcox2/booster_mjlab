@@ -354,7 +354,11 @@ class MultiMotionCommand(MotionCommand):
         Metrics/motion/clip/<error | fail_rate | sample_share>/<clip name>.
         """
         clip_extras = {}
-        if self.cfg.log_per_clip_metrics and self.num_clips > 1 and isinstance(env_ids, torch.Tensor):
+        if (
+            self.cfg.log_per_clip_metrics
+            and 1 < self.num_clips <= self.cfg.per_clip_metrics_max_clips
+            and isinstance(env_ids, torch.Tensor)
+        ):
             clip_extras = self._per_clip_extras(env_ids)
         extras = super().reset(env_ids)
         extras.update(clip_extras)
@@ -398,6 +402,10 @@ class MultiMotionCommand(MotionCommand):
 class MultiMotionCommandCfg(MotionCommandCfg):
     log_per_clip_metrics: bool = True
     """Log errors, fail rate, and sampling share per clip (only when the file has 2+ clips)."""
+    per_clip_metrics_max_clips: int = 200
+    """Skip per-clip logging above this many clips: rsl_rl's logger loops over every key each
+    iteration (full BEAT2 = ~30k keys, seconds per iteration not counted in its ETA) and W&B
+    can't chart that many. Use eval-tracking for per-clip results on big sets."""
 
     @classmethod
     def from_motion_cfg(cls, cfg: MotionCommandCfg) -> MultiMotionCommandCfg:
