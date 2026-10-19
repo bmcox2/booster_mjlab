@@ -762,25 +762,52 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 
 - Leakage check clean on both training files. Uploaded with `tools/upload_combined.py` (~6–11 MB/s); club PC: 91 GB free (disk 95% full, shared): clean up downloads after
 
+## 2026-10-19: A vs A+B comparison runs started (club GPU); handoff
+
+**State when this session ended (00:15, Oct 19)**
+- Club GPU (`sigrobotics`, `~/bmcox2/booster_mjlab`, tmux session `train`): queued/started run **A** (`train-a:v1`) then **A+B** (local `logs/motions/beat2-full-torso-train-ab.npz` = train-a:v1 + train-b:v1, built with combine-motions), chained with `;`. Both: 4096 envs, 6,000 it, seed 42, `entropy_coef 0.001` (was 0.005; for the late mean_std drift), ~1.6 h each
+- W&B names get a timestamp prefix: `2026-10-19_<HH-MM-SS>_10-19-beat2-full-A` / `..._10-19-beat2-full-AB`. Three earlier attempts crashed at startup with CUDA OOM because another user's job (`keshav`, `train_router.py`, 10.4 GB) held the GPU: **`2h7ih3ij`, `kxzph3yx`, `vbsmv80n` are dead** (tagged `oom-crashed`, `superseded`; W&B may show them "running" until it times them out). The real runs are the ones with steps climbing
+- Shared GPU: before a run, `nvidia-smi`; A needs ~10 GB (6.2 GB reference + sim), A+B ~11.7 GB, so neither fits next to another 10 GB job. Queue with `until [ "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits)" -lt 1000 ]; do sleep 120; done; <train ...>`
+
+**Artifacts** (`bmcox2-university-of-illinois-urbana-champaign/motion_upload/`; local copies in `~/robotics/data/beat2_full_torso/combined/`)
+- Training: `beat2-full-torso-train-a:v1`, `beat2-full-torso-train-b:v1` (**not `:v0`**: v0 still has the 25° trunk-lean clips)
+- Eval: `beat2-full-torso-val:v0`, `-heldout-val:v0` (unchanged by the lean fix), `-test:v1`, `-heldout-test:v1`, `-heldout-conv:v1`. `val` picks checkpoints; `test` is scored once at the end
+- Rebuild / inspect: `uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml --no-upload` (all stages cached: ~8 min, mostly segmentation). QC per clip: `~/robotics/data/beat2_full_torso/qc.json`, table `notes/beat2-full-qc.md`. Upload a combined file as-is: `tools/upload_combined.py`
+
 ## Next
-- Comparison runs on the club GPU (same seed, 6k it, entropy_coef 0.001): A = train-a, A+B = train-a + train-b (combine-motions locally). Then eval on val / heldout-val per tier and per speaker
-- Gate 2 visual audit before any final run (step-lift arcs, conversation takes, Tier B); the comparison runs double as the Gate 3 probe
-- ground_clip IK failures (672 clips, mostly Tier B / conversations) and 84 clips with the left arm > 10 cm behind (IK-start bug back?): look before the v3 rebuild
-- Gate 2: histograms per split, visual audit of 20 random + worst clips
-- v3 GMR config → rebuild into a new out_dir (on the club PC)
+**1. When both runs finish: compare A vs A+B** (club GPU; ~40k rollouts per val set, batched)
+```
+source ~/bmcox2/.wandb_env; E=bmcox2-university-of-illinois-urbana-champaign
+for RUN in <A-run-id> <AB-run-id>; do for SET in val heldout-val; do
+  uv run eval-tracking --wandb-run-path $E/mjlab/$RUN --checkpoint-name model_5999.pt \
+    --registry-name $E/motion_upload/beat2-full-torso-$SET:v0 --device cuda:0
+done; done
+uv run python tools/eval_summary.py logs/eval/<A>_model_5999_beat2-full-torso-val_v0.json logs/eval/<AB>_..._val_v0.json   # per tier + speaker
+```
+- Decide Tier B: A+B should match A on tier A clips and beat it on `_shift` clips. Also check charts (`/analyze-run`), mean_std with entropy_coef 0.001, and earlier checkpoints on val
+- This is also the plan's **Gate 3 probe**: eval the winner on its own training set, watch every clip that fails, remove only artifacts (bad retarget, impossible pose), re-upload, then the final run (longer; stop by val)
+- Milestone bars (plan): held-out ≥ 95% clips with no falls and hands ≤ 1.5× training error; training speakers' test ≥ 97%; no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio look right
+
+**2. Cleanup**
+- Club PC (disk 95% full, shared; 91 GB free on Oct 18): after the A+B run `rm logs/motions/beat2-full-torso-train-ab.npz` (7.7 GB) unless still evaluating on it; `rm -rf artifacts/beat2-full-torso-train-b:v1` (1.5 GB, only needed to build A+B); `wandb artifact cache cleanup 1GB`
+- Laptop: `wandb artifact cache cleanup 1GB` (`~/.cache/wandb` is 21 GB of upload staging copies). Keep `~/robotics/data/beat2_full_torso` (14 GB: per-clip cache, needed to rebuild/re-flag without re-running GMR) until the v3 rebuild. `~/robotics/data/beat2_full/` (3 MB, segments only) can go
+- W&B: delete the 3 `oom-crashed` runs if they clutter; move the `current` alias to the dataset versions in use; tag the comparison runs (`tracking`, `general`, `beat2`)
+
+**3. Data follow-ups (before the v3 rebuild)**
+- Gate 2 (not done): histograms per split + watch 20 random + worst clips in `visualize-motions` (step-lift arcs, conversation takes, Tier B). Gate 1 missed the trunk lean; it can miss other things
+- ground_clip IK failures: 672 clips (mostly Tier B / conversations) excluded; find why leg IK fails there
+- 84 clips with the left arm > 10 cm behind the trunk (GMR IK-start bug signature) despite the HOME-arms seed
+- 5–10 cm "arm behind" clips (mostly Sophie's low clasped hands) are now in training as info only: the K1 loses that pose
+- v3 GMR config → new `out_dir` + `name` in the spec, rerun. Prefer the club PC (needs GMR + its venv at `~/projects/GMR`); on the laptop use `OMP_NUM_THREADS=1` workers and `tools/laptop_build_governor.sh`
+- Build order: training sets first (`--sets train-a train-b`) so runs can start while eval sets build
+
+**4. Older items**
 - Slice 0 wrap-up: check audio sync on a stressed word; write the "what step 1 must handle" list (`plan.md` I)
-- Optional: train-set eval of model_5999
-- QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`) and recalibrate the 5 cm/s flag
-- `play` `s5cdzms7` model_8500: arms on `ayana_0_13_13_t38-48`, foot roll on a Lawrence clip
-- Foot tilt (> 10° on most Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
+- QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`)
+- Foot tilt (> 10° on many Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
 - The 3 clips that fail at t = 0.1 s in eval (`lawrence_0_12_12_t26-36`, `lawrence_0_13_13_t21-31`, `solomon_0_15_15_t43-53`): look at their first frames
-- More speakers (BEAT2 has more) to shrink the Ayana gap
-- If hands still well above single-clip: try future reference frames in the obs and/or a bigger network
-- Foot tilt 10–38° on many clips: look in `play`, then consider a foot-flatness reward
-- `play` `0lg80c7d` on `scott_0_1_1_t34-44` and a Lawrence clip (arms, foot roll)
-- Why GMR's IK flips the upper-arm twist (`*_Elbow_Pitch`); fixing it would recover the 4 dropped clips
-- The 20 s stepping window (`--max-foot-move 0.15`)
-- Optionally download more BEAT2 speakers and rerun `--find-still`
+- If hands stay well above single-clip: future reference frames in the obs (GMT uses ~2 s) and/or a bigger network
+- Why GMR's IK flips the upper-arm twist (`*_Elbow_Pitch`); fixing it would recover the joint-jump clips
 - Tell the lead about the milestone 1 change; update `proposal.md` once agreed
 - `play` + record videos of me9exatd and pqh0whw0 for the lead
 - Still open with lead: K1 ankle model (standard vs `-Parallel`)

@@ -42,7 +42,9 @@ Key paths:
 - `tools/beat2_batch.py`: dataset spec → segments → GMR → ground_clip → Gate 1 QC → one combined file per set → leakage check → upload. Cached per stage, `--workers` (default 12). `uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml [--stages segment] [--no-upload]`. (The old `--train/--heldout` 10 s-window version built v0–v3; it is in git before 2026-10-18.)
 - `tools/datasets/beat2_full.toml`: full BEAT2 spec (held-out speakers, split types and tiers per set, IK config, QC limits).
 - `tools/beat2_segments.py`: human-side segmentation: Tier A (ankles within 10 cm) / Tier B (foot shifts ≤ 25 cm, `_shift`) 4–20 s clips, per-speaker report.
-- `tools/clip_qc.py`: Gate 1 checks on grounded K1 clips (jumps, trunk turn, speed, floor, foot slide, self-collision, limits, arm-behind, leakage); `LIMITS` calibrated in `notes/gate1-calibration.md`.
+- `tools/upload_combined.py`: upload a combined `.npz` to W&B as-is. `tools/eval_summary.py`: eval-tracking JSONs → per tier (`_shift` = Tier B) / per speaker table, runs side by side. `tools/laptop_build_governor.sh`: thermal cycling for long laptop builds.
+- **Shared club GPU:** check `nvidia-smi` first; a full-BEAT2 run needs ~10–12 GB.
+- `tools/clip_qc.py`: Gate 1 checks on grounded K1 clips (jumps, trunk turn, trunk lean, speed, floor, foot slide, self-collision, limits, arm-behind, leakage); `LIMITS` calibrated in `notes/gate1-calibration.md`.
 - `docs/motion_preparation.md`: converting/uploading GMR `.pkl` / BeyondMimic `.csv` clips.
 
 ## Commands
@@ -93,4 +95,5 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-18: **best general tracker: `0j0flpxj` `model_5999.pt`** (torso data v3, resume of fsyy1c2w to 6k). Held-out 43/43 clips 50/50, hands 2.85 cm (Nidal 2.02, Ayana 4.58; s5cdzms7: 3.05), foot-tilt > 10° clips 12/43 (v2: 20). model_5500: 2.73 cm but fails 3/50 on `ayana_0_14_14_t36-46`. Torso IK is the default now. mean_std drifts up late in runs (2 runs) → lower `entropy_coef` next.
 - 2026-10-18: Slice 0 video with `0j0flpxj` model_5999 on `talk_scott_1_1_t34-44-torso:v0`: lean-back gone, "considerably more natural". Slice 0 left: sync check, "what step 1 must handle" list (`plan.md`), EMAGE optional.
 - 2026-10-18: full BEAT2 build (torso config, 6 held-out speakers incl. session-1 conversations): **`beat2-full-torso-train-a:v1`** (7,223 Tier A clips, 23.3 h, 19 speakers) and **`-train-b:v1`** (3,644 Tier B foot-shift clips, 5.7 h); `:v0` has trunk-lean clips (Gate 1 now checks lean > 15°); eval sets in `~/robotics/data/beat2_full_torso/combined/`. ground_clip lifts stepping feet; `LeanMotionLoader` halves motion GPU memory; combine-motions ~25× faster. Next: A vs A+B comparison runs on the club GPU.
+- 2026-10-19: A vs A+B comparison runs started on the club GPU (`10-19-beat2-full-A` / `-AB`, 6k it, seed 42, entropy_coef 0.001); W&B runs `2h7ih3ij`, `kxzph3yx`, `vbsmv80n` are dead OOM attempts (GPU shared with another user). Handoff, eval commands and cleanup: `notes/log.md` (2026-10-19 entry + Next). Compare evals per tier / speaker with `tools/eval_summary.py`.
 - Open questions for lead: which K1 ankle model (standard vs `-Parallel`).
