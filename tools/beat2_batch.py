@@ -184,6 +184,17 @@ def ik_failures(log: Path) -> int:
 def qc(clips: list[dict], spec: dict, args) -> list[dict]:
     limits = {k: v for k, v in spec.get("qc", {}).items() if k in clip_qc.LIMITS}
     cfg = spec["segment_cfg"]
+    exclude = args.exclude or spec.get("qc", {}).get("exclude", "severe")
+    cached = spec["out_dir"] / "qc.json"
+    # Reuse the last QC if it covers exactly these clips with these limits and no clip changed since.
+    if not args.force and cached.exists() and all(newer(cached, c["grounded"]) for c in clips):
+        old = json.loads(cached.read_text())
+        if old.get("limits", {}) == limits and [r["name"] for r in old["clips"]] == [c["name"] for c in clips]:
+            rows = old["clips"]
+            for r in rows:
+                r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
+            print(f"[qc] {len(rows)} clips, cached {cached}")
+            return rows
     k1 = clip_qc.check_all([c["grounded"] for c in clips], args.workers, limits)
     wrists = bs.pool_map(human_wrist_forward, [(c["smplx"], spec["model_dir"]) for c in clips], args.workers)
     rows = []
@@ -193,7 +204,6 @@ def qc(clips: list[dict], spec: dict, args) -> list[dict]:
                  max_foot_move_cm=cfg.tier_a_cm if c["tier"] == "A" else cfg.tier_b_cm)
         rows.append(r)
     clip_qc.flag(rows, limits)
-    exclude = args.exclude or spec.get("qc", {}).get("exclude", "severe")
     for r in rows:
         r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
     return rows
@@ -346,7 +356,8 @@ def main() -> None:
 
     # 5. QC
     rows = qc(clips, spec, args)
-    (spec["out_dir"] / "qc.json").write_text(json.dumps({"clips": rows}, indent=1, default=str))
+    limits = {k: v for k, v in spec.get("qc", {}).items() if k in clip_qc.LIMITS}
+    (spec["out_dir"] / "qc.json").write_text(json.dumps({"limits": limits, "clips": rows}, indent=1, default=str))
 
     # 6. combine
     artifacts = {}

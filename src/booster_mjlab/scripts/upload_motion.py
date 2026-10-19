@@ -137,11 +137,11 @@ def _quat_xyzw_to_wxyz(quat_xyzw: np.ndarray, device: torch.device) -> torch.Ten
     return torch.as_tensor(quat_wxyz, dtype=torch.float32, device=device).unsqueeze(0)
 
 
-def _build_scene_and_sim(device: str) -> tuple[Scene, Simulation, Entity]:
+def _build_scene_and_sim(device: str, num_envs: int = 1) -> tuple[Scene, Simulation, Entity]:
     cfg = booster_k1_flat_tracking_env_cfg(play=True)
-    cfg.scene.num_envs = 1
+    cfg.scene.num_envs = num_envs
     scene = Scene(cfg.scene, device=device)
-    sim = Simulation(num_envs=1, cfg=cfg.sim, model=scene.compile(), device=device)
+    sim = Simulation(num_envs=num_envs, cfg=cfg.sim, model=scene.compile(), device=device)
     scene.initialize(sim.mj_model, sim.model, sim.data)
     robot = scene["robot"]
     return scene, sim, robot
@@ -207,6 +207,70 @@ def _run_forward_kinematics(
     ):
         output[key] = np.stack(cast(list[np.ndarray], log[key]), axis=0)
     return output
+
+
+# Frames per forward call in the batched converter (one sim env per frame).
+FK_BATCH = 256
+_BATCHED_SIM: dict[str, tuple[Scene, Simulation, Entity]] = {}
+
+
+def _run_forward_kinematics_batched(
+    resampled: ResampledMotion,
+    scene: Scene,
+    sim: Simulation,
+    robot: Entity,
+) -> dict[str, np.ndarray]:
+    """_run_forward_kinematics, FK_BATCH frames per sim.forward() (one env per frame).
+
+    Every frame is independent (positions and velocities in, body poses and velocities out, no
+    stepping), so each env computes exactly what the one-env loop computes for that frame. The
+    last batch is padded by repeating the last frame and the padding is dropped.
+    """
+    n, batch = resampled.num_frames, scene.num_envs
+    device = robot.data.default_root_state.device
+    quat_xyzw = resampled.root_rot.as_quat()
+    quat_wxyz = torch.as_tensor(
+        np.ascontiguousarray(quat_xyzw[:, [3, 0, 1, 2]]), dtype=torch.float32, device=device
+    )
+    keys = ("joint_pos", "joint_vel", "body_pos_w", "body_quat_w", "body_lin_vel_w", "body_ang_vel_w")
+    log: dict[str, list[np.ndarray]] = {k: [] for k in keys}
+    scene.reset()
+    for start in range(0, n, batch):
+        idx = torch.clamp(torch.arange(start, start + batch, device=device), max=n - 1)
+        root_state = robot.data.default_root_state.clone()
+        root_state[:, 0:3] = resampled.root_pos[idx]
+        root_state[:, 3:7] = quat_wxyz[idx]
+        root_state[:, 7:10] = resampled.root_lin_vel[idx]
+        root_state[:, 10:13] = resampled.root_ang_vel[idx]
+        robot.write_root_state_to_sim(root_state)
+
+        joint_pos = robot.data.default_joint_pos.clone()
+        joint_vel = robot.data.default_joint_vel.clone()
+        joint_pos[:] = resampled.joint_pos[idx]
+        joint_vel[:] = resampled.joint_vel[idx]
+        robot.write_joint_state_to_sim(joint_pos, joint_vel)
+
+        sim.forward()
+        scene.update(sim.mj_model.opt.timestep)
+
+        k = min(batch, n - start)
+        d = robot.data
+        for key, value in zip(keys, (d.joint_pos, d.joint_vel, d.body_link_pos_w, d.body_link_quat_w,
+                                     d.body_link_lin_vel_w, d.body_link_ang_vel_w)):
+            log[key].append(value[:k].cpu().numpy().copy())
+    output: dict[str, np.ndarray] = {"fps": np.array([resampled.output_fps], dtype=np.float32)}
+    output.update({k: np.concatenate(v, axis=0) for k, v in log.items()})
+    return output
+
+
+def convert_batched(input_file: Path, device: str = "cpu") -> dict[str, np.ndarray]:
+    """convert()'s arrays for one clip, using a batched sim built once per process (no file written)."""
+    if device not in _BATCHED_SIM:
+        _BATCHED_SIM[device] = _build_scene_and_sim(device, num_envs=FK_BATCH)
+    scene, sim, robot = _BATCHED_SIM[device]
+    motion_file = MotionFile.load(input_file)
+    resampled = _resample_motion(motion_file, output_fps=_default_output_fps(), device=torch.device(device))
+    return _run_forward_kinematics_batched(resampled, scene, sim, robot)
 
 
 def _validate_output(output_file: Path, robot: Entity, device: str) -> None:

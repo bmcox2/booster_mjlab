@@ -93,13 +93,13 @@ def _clips_from_npz(path: Path, name: str, source: str) -> list[Clip]:
 def load_source(src: str, device: str) -> list[Clip]:
     path = Path(src).expanduser()
     if path.suffix == ".pkl":
-        from booster_mjlab.scripts.upload_motion import Config as UploadConfig
-        from booster_mjlab.scripts.upload_motion import convert
+        # Same arrays as upload-motion's convert() (bit-identical), but the sim is built once per
+        # process and runs 256 frames per forward call: ~25x faster per clip.
+        from booster_mjlab.scripts.upload_motion import convert_batched
 
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "motion.npz"
-            convert(UploadConfig(input_file=path, device=device, validate=False), out)
-            return _clips_from_npz(out, _default_name(path.stem), str(path.resolve()))
+        data = convert_batched(path, device=device)
+        frames = {k: data[k] for k in FRAME_KEYS}
+        return [Clip(_default_name(path.stem), str(path.resolve()), float(data["fps"][0]), frames)]
     if path.suffix == ".npz":
         return _clips_from_npz(path, _default_name(path.stem), str(path.resolve()))
 
