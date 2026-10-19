@@ -191,6 +191,7 @@ def qc(clips: list[dict], spec: dict, args) -> list[dict]:
         old = json.loads(cached.read_text())
         if old.get("limits", {}) == limits and [r["name"] for r in old["clips"]] == [c["name"] for c in clips]:
             rows = old["clips"]
+            clip_qc.flag(rows, limits)  # flags depend only on the stored numbers: re-flag with the current rules
             for r in rows:
                 r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
             print(f"[qc] {len(rows)} clips, cached {cached}")

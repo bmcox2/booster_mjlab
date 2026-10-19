@@ -80,6 +80,10 @@ LIMITS = {
     # in up to 25 mm) is information only: talk_scott_1_1_t34-44 does it for 0.6 s and trained to 50/50.
     "self_depth_mm": 5.0,
     "self_run_s": 0.1,
+    # Severe only deeper than this: on the full BEAT2 build, hands resting on the belly overlapped the
+    # trunk by ~12 mm (median) for ~0.6 s, the same kind of contact as the hand-on-leg case above.
+    # Feet crossing into each other (median 47 mm for 3.8 s) stay severe.
+    "self_severe_mm": 25.0,
     "self_info_pairs": r"(left|right)_hand.* / \1_(hip|shank).*",
     # older checks (beat2_batch QC); clips that trained to 50/50: K1 feet <= 1.8 cm, trunk <= 1.8 cm,
     # knees 14-36 deg, 0 joint-limit frames
@@ -90,7 +94,10 @@ LIMITS = {
     "limit_frac": 0.05,           # a joint group within 1 deg of a limit on more than this share of frames
     "twist_severe_frac": 0.5,     # upper-arm twist at its limit on more than this share: severe
     "arm_behind_m": 0.05,         # K1 hand this far behind the trunk while the human's wrist is
-    "human_front_m": 0.05,        # ... this far in front of the pelvis: GMR's IK stuck, severe
+    "human_front_m": 0.05,        # ... this far in front of the pelvis: arm pose lost (info)
+    # Severe beyond this: GMR's IK-start bug held the hand 11-17 cm behind. On the full build 77% of
+    # flags sat within 2 cm of the 5 cm limit (mostly Sophie's low clasped hands, which the K1 lets hang).
+    "arm_behind_severe_m": 0.10,
     "robust_z": 3.5,              # batch-relative outlier (median / MAD) on arms, trunk, knees
 }
 LIMIT_MARGIN = np.radians(1.0)
@@ -295,7 +302,10 @@ def flag(rows: list[dict], limits: dict | None = None) -> None:
         for k, (med, sd) in stats.items():
             z = (r[k] - med) / sd
             if abs(z) > L["robust_z"]:
-                add(f"outlier {k.rsplit('_', 1)[0].replace('_', ' ')} (z {z:+.1f})", k == "trunk_drop_cm" and z > 0)
+                # A trunk-drop outlier is severe only if it also breaks the fixed limit: with 16k clips and
+                # foot shifts, 3.8-5 cm drops are outliers of the batch but normal weight shifts.
+                add(f"outlier {k.rsplit('_', 1)[0].replace('_', ' ')} (z {z:+.1f})",
+                    k == "trunk_drop_cm" and z > 0 and r["trunk_drop_cm"] > L["trunk_drop_cm"])
         if r["joint_jump_rad"] > L["joint_jump_rad"]:
             joint, t = r["joint_jump_at"]
             add(f"joint jump {r['joint_jump_rad']:.2f} rad ({joint} at {t:.1f} s)", True)
@@ -316,13 +326,14 @@ def flag(rows: list[dict], limits: dict | None = None) -> None:
             add(f"{side} foot slides {r['slide_cm_frame']:.1f} cm in one frame (at {t:.1f} s)", True)
         if r["self_run_s"] > L["self_run_s"]:
             pair, t = r["self_worst"]
-            add(f"self-collision {pair} {r['self_run_s']:.1f} s (at {t:.1f} s, {r['self_depth_mm']:.0f} mm)", True)
+            add(f"self-collision {pair} {r['self_run_s']:.1f} s (at {t:.1f} s, {r['self_depth_mm']:.0f} mm)",
+                r["self_depth_mm"] > L["self_severe_mm"])
         if r["hand_leg_run_s"] > L["self_run_s"]:
             pair, t = r["hand_leg_worst"]
             add(f"hand presses into leg {r['hand_leg_depth_mm']:.0f} mm for {r['hand_leg_run_s']:.1f} s (at {t:.1f} s)")
         for side, k1, human in zip(("left", "right"), r["hand_fwd_k1_m"], r.get("hand_fwd_human_m") or (None, None)):
             if human is not None and k1 < -L["arm_behind_m"] and human > L["human_front_m"]:
-                add(f"{side} arm behind body (human's in front)", True)
+                add(f"{side} arm behind body {-k1 * 100:.0f} cm (human's in front)", k1 < -L["arm_behind_severe_m"])
         r["flags"], r["severe"] = f, severe
 
 
