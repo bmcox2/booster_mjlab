@@ -787,6 +787,14 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Harness calibration (change only after A+B, same sampler for the comparison): the cap counter counts sampling calls (several per env step), so 2400 ≈ 40-50 iterations, not 100; no warm-up (3 clips quarantined before it 150, first at it 57). Next: count per env step, no quarantine before ~it 300
 - Fall points sit late in flagged clips (median 72% through): check whether Tier A segment ends cut into step onsets
 
+**A vs A+B result (model_5999, val / heldout-val v0): A+B wins**
+- A = `wbitlbqw` (train-a:v1, 3.1 h, 116 quarantined), A+B = `1de2pner` (train-a + train-b, 2.1 h, 226 quarantined: 3.0% of tier B vs 1.6% of tier A). Both 6k it, harness, seed 42, entropy 0.001; mean_std fell all run in both
+- Held-out speakers: A 192/194 clips, 4 failed rollouts (all at 0.2 s, Ayana), hands 3.39 cm; **A+B 194/194, 0 failures**, hands 3.46. Tier A 3.26 → 3.39 cm, tier B 5.02 → 4.48 cm
+- Val (training speakers, unseen takes): A 464/474, 198 failed rollouts, hands 4.51; A+B 466/474, 171, 4.43. Tier A 3.92 → 3.97, tier B 6.02 → 5.61
+- Tier B gains (~0.4-0.5 cm, both sets) beat the tier A cost (+0.05 / +0.13 cm); single seed, per-speaker changes ±0.5 cm are noise-level
+- Same 3 Solomon val clips fail 50/50 at the same instant in **both** runs (`solomon_0_13_13_t29-40_shift` 10.2 s, `_0_16_16_t19-23_shift` 3.1 s, `_0_12_12_t58-77_shift` ~13.5 s): all at the 25 cm foot-move cap, upper-arm twist at limit 8-44%, foot slide or hand pressing the leg near the fail time → data, not policy. Exclude from val or fix; view in visualize-motions
+- `lawrence_0_12_12_t26-38` fails at 0.1 s in both (start-of-clip issue, same clip family as before)
+
 **Artifacts** (`bmcox2-university-of-illinois-urbana-champaign/motion_upload/`; local copies in `~/robotics/data/beat2_full_torso/combined/`)
 - Training: `beat2-full-torso-train-a:v1`, `beat2-full-torso-train-b:v1` (**not `:v0`**: v0 still has the 25° trunk-lean clips)
 - Eval: `beat2-full-torso-val:v0`, `-heldout-val:v0` (unchanged by the lean fix), `-test:v1`, `-heldout-test:v1`, `-heldout-conv:v1`. `val` picks checkpoints; `test` is scored once at the end
