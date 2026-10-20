@@ -800,26 +800,40 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Eval: `beat2-full-torso-val:v0`, `-heldout-val:v0` (unchanged by the lean fix), `-test:v1`, `-heldout-test:v1`, `-heldout-conv:v1`. `val` picks checkpoints; `test` is scored once at the end
 - Rebuild / inspect: `uv run python tools/beat2_batch.py --spec tools/datasets/beat2_full.toml --no-upload` (all stages cached: ~8 min, mostly segmentation). QC per clip: `~/robotics/data/beat2_full_torso/qc.json`, table `notes/beat2-full-qc.md`. Upload a combined file as-is: `tools/upload_combined.py`
 
+## 2026-10-20: Direction set; roadmap rewritten
+
+- Wrote the project direction (`roadmap.md`, rewritten): first big goal = a stationary K1 holding a spoken conversation with gestures in sync, on the real robot; long term an LLM companion that calls skills (walk_to, look_at, point, wave). Layered stack, the LLM never controls joints; tracker onboard, LLM off-robot
+- Tracker "done in sim" = 7 exit criteria (held-out, robustness, sim2sim, generated motion, transitions, smoothness, frozen checkpoint); real done = hardware. Status per criterion in `roadmap.md`. Criterion 1 essentially met by `1de2pner`
+- Gaps found while reviewing: no deployable policy file (export skipped for big sets → need a policy-only ONNX); the policy has never practiced transitions (clip end = teleport); EMAGE is offline, so the < 1 s latency target needs chunked generation
+- Hands-on K1 time (compute variant, SDK, coexisting with Booster's controller) and the ankle-model decision go **before** the final tracker run
+- Reading list added to `papers.md`. `proposal.md` unchanged until the lead hears about the extension
+
 ## Next
-**1. When both runs finish: compare A vs A+B** (club GPU; ~40k rollouts per val set, batched)
-```
-source ~/bmcox2/.wandb_env; E=bmcox2-university-of-illinois-urbana-champaign
-for RUN in <A-run-id> <AB-run-id>; do for SET in val heldout-val; do
-  uv run eval-tracking --wandb-run-path $E/mjlab/$RUN --checkpoint-name model_5999.pt \
-    --registry-name $E/motion_upload/beat2-full-torso-$SET:v0 --device cuda:0
-done; done
-uv run python tools/eval_summary.py logs/eval/<A>_model_5999_beat2-full-torso-val_v0.json logs/eval/<AB>_..._val_v0.json   # per tier + speaker
-```
-- Decide Tier B: A+B should match A on tier A clips and beat it on `_shift` clips. Also check charts (`/analyze-run`), mean_std with entropy_coef 0.001, and earlier checkpoints on val
-- This is also the plan's **Gate 3 probe**: eval the winner on its own training set, watch every clip that fails, remove only artifacts (bad retarget, impossible pose), re-upload, then the final run (longer; stop by val)
-- Milestone bars (plan): held-out ≥ 95% clips with no falls and hands ≤ 1.5× training error; training speakers' test ≥ 97%; no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio look right
+Current step: **tracker exit criteria** (`roadmap.md` table), in parallel with the speech loop.
 
-**2. Cleanup**
-- Club PC (disk 95% full, shared; 91 GB free on Oct 18): after the A+B run `rm logs/motions/beat2-full-torso-train-ab.npz` (7.7 GB) unless still evaluating on it; `rm -rf artifacts/beat2-full-torso-train-b:v1` (1.5 GB, only needed to build A+B); `wandb artifact cache cleanup 1GB`
-- Laptop: `wandb artifact cache cleanup 1GB` (`~/.cache/wandb` is 21 GB of upload staging copies). Keep `~/robotics/data/beat2_full_torso` (14 GB: per-clip cache, needed to rebuild/re-flag without re-running GMR) until the v3 rebuild. `~/robotics/data/beat2_full/` (3 MB, segments only) can go
-- W&B: delete the 3 `oom-crashed` runs if they clutter; move the `current` alias to the dataset versions in use; tag the comparison runs (`tracking`, `general`, `beat2`)
+**1. Tracker (criteria 1–7)**
+- Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Review `1de2pner`'s `flagged_clips.json` (226; Lawrence, Katya first) at `most_falls_near_s`
+- Harness calibration before the final run: count steps at the cap per env step (now per sampling call, so 2400 ≈ 40–50 it), no quarantine before ~it 300
+- Criterion 3: policy-only ONNX export (obs → actions; reference fed live), then a sim2sim script in plain MuJoCo at the real control rate
+- Criterion 2: `eval-tracking --push` on heldout-val; ranges beyond training; observation latency/noise if missing
+- Criterion 6: action-rate / jerk metric in `eval-tracking`
+- Criterion 5: design transitions (idle hold, clip-to-clip, return to idle); likely stitched training clips with idle stretches
+- Milestone checks with `1de2pner`: no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio
+- Final run (after hands-on K1 + ankle model): A+B data (`logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
 
-**3. Data follow-ups (before the v3 rebuild)**
+**2. Speech loop on the laptop** (no robot): STT → LLM → TTS, measure end-to-end latency (target < ~1 s)
+
+**3. Hardware / people**
+- Hands-on K1: compute variant, SDK joint control, custom policy vs Booster's controller; confirm mic array, speaker, battery, Doubao integration
+- Lead: milestone 1 change + the speech/LLM extension; ankle model (standard vs `-Parallel`); then update `proposal.md`
+
+**4. Cleanup**
+- Club PC (disk 97% full, shared): keep `logs/motions/beat2-full-torso-train-ab.npz` (7.7 GB) for the final run; `rm -rf artifacts/beat2-full-torso-train-b:v1` (1.5 GB); `wandb artifact cache cleanup 1GB`
+- Laptop: `wandb artifact cache cleanup 1GB` (`~/.cache/wandb` ~21 GB). Keep `~/robotics/data/beat2_full_torso` (per-clip cache) until the next rebuild; `~/robotics/data/beat2_full/` can go
+- W&B: tag `1de2pner` `keep`, `wbitlbqw` `superseded`; tag the dead runs (`2h7ih3ij`, `kxzph3yx`, `vbsmv80n`, `rm0fhes8`, `jf0opr8t`, `aorrbkep`, `y3k07rwu`, `4vldt40m`) `superseded`; move dataset `current` aliases to the versions in use
+- Unexplained: run `y3k07rwu` died at it 244 (log cut at `Exception in thread Thread-1`). Train output is `tee`d to `logs/train_*.txt` now
+
+**5. Data follow-ups (before the v3 rebuild)**
 - Gate 2 (not done): histograms per split + watch 20 random + worst clips in `visualize-motions` (step-lift arcs, conversation takes, Tier B). Gate 1 missed the trunk lean; it can miss other things
 - ground_clip IK failures: 672 clips (mostly Tier B / conversations) excluded; find why leg IK fails there
 - 84 clips with the left arm > 10 cm behind the trunk (GMR IK-start bug signature) despite the HOME-arms seed
@@ -827,13 +841,11 @@ uv run python tools/eval_summary.py logs/eval/<A>_model_5999_beat2-full-torso-va
 - v3 GMR config → new `out_dir` + `name` in the spec, rerun. Prefer the club PC (needs GMR + its venv at `~/projects/GMR`); on the laptop use `OMP_NUM_THREADS=1` workers and `tools/laptop_build_governor.sh`
 - Build order: training sets first (`--sets train-a train-b`) so runs can start while eval sets build
 
-**4. Older items**
+**6. Older items**
 - Slice 0 wrap-up: check audio sync on a stressed word; write the "what step 1 must handle" list (`plan.md` I)
 - QC "arms K1" column measures the elbow: switch it to the forearm tip (`*_hand_end_ball`)
 - Foot tilt (> 10° on many Lawrence / Solomon clips): check references' foot orientation vs robot; consider a foot-flatness reward
-- The 3 clips that fail at t = 0.1 s in eval (`lawrence_0_12_12_t26-36`, `lawrence_0_13_13_t21-31`, `solomon_0_15_15_t43-53`): look at their first frames
+- Clips that fail at t = 0.1–0.2 s in eval (old: `lawrence_0_12_12_t26-36`, `lawrence_0_13_13_t21-31`, `solomon_0_15_15_t43-53`; full BEAT2: `lawrence_0_12_12_t26-38`, `ayana_0_13_13_*`): look at their first frames vs the ±0.1 rad start jitter
 - If hands stay well above single-clip: future reference frames in the obs (GMT uses ~2 s) and/or a bigger network
 - Why GMR's IK flips the upper-arm twist (`*_Elbow_Pitch`); fixing it would recover the joint-jump clips
-- Tell the lead about the milestone 1 change; update `proposal.md` once agreed
 - `play` + record videos of me9exatd and pqh0whw0 for the lead
-- Still open with lead: K1 ankle model (standard vs `-Parallel`)

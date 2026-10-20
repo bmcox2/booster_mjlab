@@ -48,3 +48,10 @@ Full pipeline on the Unitree G1 (29 DoF): speech → gesture motion → retarget
 - **BeyondMimic:** modern tracking with sim-to-real; mjlab's tracking task builds on it.
 - **ExBody2:** expressive upper body while walking (milestone: gesturing while walking).
 - **GMR, AMASS, HumanML3D, SeG, BEAT2:** data and retargeting (see proposal).
+
+## Next reading (2026-10-20 direction)
+- **SayCan** (Ahn et al., 2022) and **Code as Policies** (Liang et al., 2022): LLM → robot skills, the pattern for the tool-call layer.
+- **EMAGE** (Liu et al., CVPR 2024): BEAT2's audio → full-body gesture model; candidate gesture generator. Check whether it can run in chunks.
+- **ExBody / ExBody2**: expressive upper body on top of locomotion.
+- **BeyondMimic**: the tracking method mjlab's task comes from; its sim-to-real and deploy pipeline are the model for criteria 2–3.
+- **GMT** (General Motion Tracking): a general tracker over many clips; uses future reference frames (~2 s) in the observation.

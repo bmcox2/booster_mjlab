@@ -141,6 +141,9 @@ generated motion will ask of the tracker.
   - (from H) generated vs mocap differences
 - [x] Update `CLAUDE.md` status.
 
+## Status (2026-10-20)
+- Superseded as the current step: the general tracker is trained (`1de2pner`); the current step is the tracker exit criteria in `roadmap.md`. Slice 0 leftovers below are still worth closing.
+
 ## Status (2026-10-18)
 - A–F done (see `log.md`, 2026-10-16/17). The window is **10 s**, not 20–30 s: Scott steps every 5–10 s, so no longer still window exists (`--find-still`). The general tracker (`0j0flpxj` model_5999) tracks 146 such clips, so criterion 1 is met in spirit
 - G: video recorded and dubbed (`0j0flpxj` model_5999, torso IK, `talk_scott_1_1_t34-44-torso:v0`): "considerably better and more natural, the lean back is gone". Sync check still to do
