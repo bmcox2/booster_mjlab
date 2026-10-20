@@ -72,7 +72,7 @@ Real "done" only after hardware deployment.
 | # | Step | Done when |
 |---|---|---|
 | 1 | **Finish the tracker exit criteria** ← *current* (in parallel with 2) | All 7 rows above met in sim |
-| 2 | **Speech loop on the laptop, no robot:** STT → LLM → TTS | End-to-end latency measured, target < ~1 s |
+| 2 | **Speech loop on the laptop, no robot:** STT → LLM → TTS (plan: `speech_plan.md`) | End-to-end latency measured, target < ~1 s |
 | 3 | **Gesture generator in sim:** TTS audio → generator → retarget → tracker | Any spoken reply → K1 gesturing in sim, in sync with the audio |
 | 4 | **Hardware:** tracker with canned clips, then the live pipeline | Stationary conversational K1 on the real robot |
 | 5 | **LLM tool calls:** look_at, wave, point, walk_to | The LLM triggers skills during a conversation |

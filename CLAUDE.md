@@ -11,7 +11,7 @@ Context for AI assistants working in this repo. Keep this file current; it is re
 ## Roadmap (revised 2026-10-20; full version in `notes/roadmap.md`)
 Goal: a stationary K1 that holds a spoken conversation on the real robot, gesturing in sync with its speech; later an LLM companion that also calls skills (walk_to, look_at, point, wave). Layered stack, the LLM never controls joints: mics → STT → LLM (+ tool calls) → TTS → gesture generator (EMAGE candidate) → GMR retarget → **RL tracker (onboard)**; locomotion via Booster's SDK at first.
 1. **Tracker exit criteria (current):** held-out (essentially met), robustness beyond training randomization, sim2sim with a policy-only ONNX export, generated-motion input, transitions (idle / clip-to-clip; not trained yet), smoothness, frozen checkpoint. Table in `notes/roadmap.md`.
-2. Speech loop on the laptop (STT → LLM → TTS), latency < ~1 s. In parallel with 1.
+2. Speech loop on the laptop (STT → LLM → TTS), latency < ~1 s. In parallel with 1. Plan: `notes/speech_plan.md` (free-first: Groq / Gemini free tiers, Ollama local; code in `speech/` with its own venv).
 3. Gesture generator in sim: TTS audio → generator → retarget → tracker.
 4. Hardware: canned clips, then the live pipeline. Hands-on K1 time (compute variant, SDK, coexisting with Booster's controller) comes **before** the final tracker run.
 5. LLM tool calls. 6. Mobility + gesture, presenting.
@@ -24,7 +24,7 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
-- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `multi-clip.md` (MultiMotionCommand design, diff from mjlab, per-clip metrics), `beat2-full-segments.md` / `gate1-calibration.md` (full BEAT2 dataset), `plan.md` (Slice 0 checklist; nearly done), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `multi-clip.md` (MultiMotionCommand design, diff from mjlab, per-clip metrics), `beat2-full-segments.md` / `gate1-calibration.md` (full BEAT2 dataset), `plan.md` (Slice 0 checklist; nearly done), `speech_plan.md` (speech + LLM loop: steps, decisions, K1 audio questions), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
 - Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 

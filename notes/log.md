@@ -807,6 +807,7 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Gaps found while reviewing: no deployable policy file (export skipped for big sets → need a policy-only ONNX); the policy has never practiced transitions (clip end = teleport); EMAGE is offline, so the < 1 s latency target needs chunked generation
 - Hands-on K1 time (compute variant, SDK, coexisting with Booster's controller) and the ankle-model decision go **before** the final tracker run
 - Reading list added to `papers.md`. `proposal.md` unchanged until the lead hears about the extension
+- Speech + LLM loop planned (`speech_plan.md`): 7 steps (v0 batch → instrumentation → VAD/turn-taking → streaming + framework spike → barge-in → fake robot tools → gesture-sync hooks). Free-first (Groq, Gemini Flash-Lite, Ollama Qwen3-8B; Claude Pro has no API access), STT/TTS picked by measured latency, headset then laptop speakers, own pipeline with a Pipecat comparison
 
 ## Next
 Current step: **tracker exit criteria** (`roadmap.md` table), in parallel with the speech loop.
@@ -821,7 +822,7 @@ Current step: **tracker exit criteria** (`roadmap.md` table), in parallel with t
 - Milestone checks with `1de2pner`: no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio
 - Final run (after hands-on K1 + ankle model): A+B data (`logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
 
-**2. Speech loop on the laptop** (no robot): STT → LLM → TTS, measure end-to-end latency (target < ~1 s)
+**2. Speech loop on the laptop** (no robot): follow `speech_plan.md`, starting with step 1 (v0, push-to-talk) and the decisions table
 
 **3. Hardware / people**
 - Hands-on K1: compute variant, SDK joint control, custom policy vs Booster's controller; confirm mic array, speaker, battery, Doubao integration
