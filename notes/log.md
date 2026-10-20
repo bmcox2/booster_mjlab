@@ -809,12 +809,42 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - Reading list added to `papers.md`. `proposal.md` unchanged until the lead hears about the extension
 - Speech + LLM loop planned (`speech_plan.md`): 7 steps (v0 batch → instrumentation → VAD/turn-taking → streaming + framework spike → barge-in → fake robot tools → gesture-sync hooks). Free-first (Groq, Gemini Flash-Lite, Ollama Qwen3-8B; Claude Pro has no API access), STT/TTS picked by measured latency, headset then laptop speakers, own pipeline with a Pipecat comparison
 
+## 2026-10-20: quarantined clips of runs A (`wbitlbqw`) and A+B (`1de2pner`): mostly noise, a few retarget bugs
+
+**Lists:** A 116 clips (Tier A), A+B 226 (114 A + 112 B), only 65 in both → 277 distinct. Quarantine rate Tier A 1.6% in both runs, Tier B 3.1%. Most fired at it 250–600 (A median it 416), a few late (it 2.6–5.7k) with 10–31% of all falls each (Lawrence, Miranda)
+
+**Do they still fail at the end?** Subset file = 277 flagged + 320 random unflagged controls (200 A, 120 B); `eval-tracking --motion-file <subset> --num-rollouts 20` with both `model_5999` (laptop GPU, ~35 min each)
+
+| clips | A policy all-pass | A+B policy all-pass |
+|---|---|---|
+| controls Tier A / B | 100% / 100% | 100% / 100% |
+| Tier A flagged by only one run (100) | 100% | 100% |
+| Tier A flagged by both runs (65) | 80% | 82% |
+| Tier B flagged (112) | 72% | 79% |
+
+- **Quarantine is mostly early-training noise:** clips flagged by one run are learned like any other. Review clips that still fail in an end-of-run eval, not the raw `flagged_clips.json`
+- **19 clips fail with both policies** (8 Tier A, 11 B), usually 0/20 at the same second (73–76% within 1.5 s of the training fall bin), always `ee_body_pos` (hand/foot > 25 cm off in height): `carla_0_57_57_t18-26`, `itoi_0_7_7_t61-76_shift`, `katya_0_66_66_t20-40`, `katya_1_2_2_t429-434_shift`, `katya_1_2_2_t89-95`, `lawrence_0_101_101_t42-55`, `lawrence_0_98_98_t26-36_shift`, `lawrence_0_98_98_t41-45`, `lawrence_1_10_10_t127-133_shift`, `miranda_1_1_1_t79-94`, `scott_0_91_91_t37-44_shift`, `scott_1_1_1_t254-260_shift`, `scott_1_2_2_t182-187_shift`, `scott_1_3_3_t277-281_shift`, `scott_1_4_4_t136-143`, `scott_1_6_6_t286-293_shift`, `solomon_0_23_23_t17-30_shift`, `solomon_0_56_56_t15-30`, `wayne_0_33_33_t4-9_shift`
+
+**Causes** (QC numbers, K1 forward kinematics on the reference, SMPL-X human data, rendered frames)
+- **Foot held off the floor** (Gate 1 missed it; ground_clip logs it as "foot gap"): `wayne_0_33_33_t7-20` is a broken leg retarget (K1 right foot 27 cm up, 89° tilt, all clip; human stands normally). Katya's conversation takes: one knee bent ~50° with the foot resting on its toes; the K1 has no toes, so its foot hovers 4–8 cm and it stands on one leg for seconds. Median foot gap ≥ 30 mm: 71 training clips, 17–100% quarantined (< 10 mm: 1.9%)
+- **Crossed feet** (foot–foot overlap, mostly Katya): 21 clips, 48% quarantined; Gate 1 made it severe only > 25 mm deep
+- **Extreme arm-joint speed** (the 0/20 Tier A clips: Scott, Solomon, Lawrence, Miranda, Katya `0_66`): arm joints 11–17 rad/s in the 0.7 s before the fall (control windows p95 5.3), but human and K1 arm *segments* swing at the same angular speed (K1/human ≈ 1, ordinary vs controls). Large joint speed for ordinary segment motion suggests a near-singular shoulder (arm out sideways lines the pitch axis up with the upper arm). **Not confirmed** (test script didn't finish). Per-frame jumps 0.2–0.5 rad, under the 0.6 limit
+- **Step onsets at Tier A ends** (minor): 35–40% of flagged clips fall in their last 1.5 s; 89% of those clips end at a step (all Tier A: 69%). Humans shift weight before lifting a foot, and the cut keeps that
+- **Not a cause:** CoM/ZMP over the support polygon (same as controls), clip length, conversation vs session-0 takes
+- Speakers: Katya 8–14% of her Tier A clips (one take `30_katya_1_2_2`: 22 clips), Lawrence 4–6%, Scott 3%; Sophie / Wayne / Carla ~0.3%
+
+**Gate 1: two new severe rules** (`tools/clip_qc.py`, `beat2_batch.py` reads the foot gap from the ground_clip logs, so the cached QC re-flags without re-checking)
+- `foot_gap_mm` 30: higher foot's median height ≥ 30 mm. `feet_pair`: left/right foot overlap > 5 mm for > 0.1 s
+- On the current build: +96 severe (75 in train-a/b: 71 foot gap, 7 feet overlap); 20 of the 75 were quarantined (27% vs ~2.5%); catches 3 of the 19 always-failing clips. Takes effect at the next `beat2_batch` run (train-a/b `:v2`); not rebuilt yet
+
 ## Next
 Current step: **tracker exit criteria** (`roadmap.md` table), in parallel with the speech loop.
 
 **1. Tracker (criteria 1–7)**
-- Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Review `1de2pner`'s `flagged_clips.json` (226; Lawrence, Katya first) at `most_falls_near_s`
-- Harness calibration before the final run: count steps at the cap per env step (now per sampling call, so 2400 ≈ 40–50 it), no quarantine before ~it 300
+- Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Quarantine review done (2026-10-20 entry): before the final run, rebuild train-a/b with the two new Gate 1 rules (`beat2_batch.py --spec tools/datasets/beat2_full.toml`, cached up to QC), and drop the 19 always-failing clips (Gate 1 catches 3; needs a per-clip exclude list in the spec)
+- Arm-joint speed: confirm the shoulder-singularity guess (angle between upper arm and shoulder-pitch axis vs arm-joint speed, failing windows vs controls). If confirmed: a QC flag on arm-joint speed > ~10 rad/s, and a fix in the GMR IK config (penalize shoulder-pitch / elbow-yaw velocity)
+- Optional: trim ~0.5 s off Tier A clip ends that stop at a step onset (`beat2_segments.py`)
+- Harness calibration before the final run: count steps at the cap per env step (now per sampling call, so 2400 ≈ 40–50 it), no quarantine before ~it 1,000 (half of all quarantines came at it 250–600 and were learnable). After a run, eval the flagged clips (20 rollouts, ~10 min) and review only the ones still failing
 - Criterion 3: policy-only ONNX export (obs → actions; reference fed live), then a sim2sim script in plain MuJoCo at the real control rate
 - Criterion 2: `eval-tracking --push` on heldout-val; ranges beyond training; observation latency/noise if missing
 - Criterion 6: action-rate / jerk metric in `eval-tracking`

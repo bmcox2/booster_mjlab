@@ -89,6 +89,14 @@ LIMITS = {
     # Feet crossing into each other (median 47 mm for 3.8 s) stay severe.
     "self_severe_mm": 25.0,
     "self_info_pairs": r"(left|right)_hand.* / \1_(hip|shank).*",
+    # Feet overlapping at all (> self_depth_mm for > self_run_s) is severe: crossed legs (mostly Katya's
+    # conversation takes). 21 training clips, 48% quarantined by the 10-19 full-BEAT2 runs' sampler.
+    "feet_pair": r"left_foot.* / right_foot.*",
+    # A foot held off the floor in a standing clip (median height over the clip, from ground_clip's log):
+    # a broken leg retarget (wayne_0_33_33_t7-20: 27 cm up, 89 deg tilt, human standing normally) or a
+    # human foot resting on its toes, which the toeless K1 turns into standing on one leg (Katya).
+    # >= 30 mm: 71 training clips, 17-100% quarantined (1.9% below 10 mm). notes/log.md 2026-10-20.
+    "foot_gap_mm": 30.0,
     # older checks (beat2_batch QC); clips that trained to 50/50: K1 feet <= 1.8 cm, trunk <= 1.8 cm,
     # knees 14-36 deg, 0 joint-limit frames
     "feet_k1_cm": 8.0,            # K1 is ~0.6x human: the 10 cm human filter allows ~6 cm
@@ -344,6 +352,12 @@ def flag(rows: list[dict], limits: dict | None = None) -> None:
             pair, t = r["self_worst"]
             add(f"self-collision {pair} {r['self_run_s']:.1f} s (at {t:.1f} s, {r['self_depth_mm']:.0f} mm)",
                 r["self_depth_mm"] > L["self_severe_mm"])
+        feet_pair = re.compile(L["feet_pair"])
+        for pair, (run, depth, start) in (r.get("self_pairs") or {}).items():
+            if feet_pair.fullmatch(pair) and run > L["self_run_s"]:
+                add(f"feet overlap {depth:.0f} mm for {run:.1f} s (at {start:.1f} s)", True)
+        if r.get("foot_gap_mm", 0.0) >= L["foot_gap_mm"]:
+            add(f"foot held {r['foot_gap_mm']:.0f} mm off the floor (median)", True)
         if r["hand_leg_run_s"] > L["self_run_s"]:
             pair, t = r["hand_leg_worst"]
             add(f"hand presses into leg {r['hand_leg_depth_mm']:.0f} mm for {r['hand_leg_run_s']:.1f} s (at {t:.1f} s)")

@@ -181,6 +181,12 @@ def ik_failures(log: Path) -> int:
     return int(m.group(1)) if m else 0
 
 
+def foot_gap_mm(log: Path) -> float:
+    """Higher of the two feet's median height above the floor (mm), from ground_clip's log."""
+    m = re.search(r"left median (-?[\d.]+) max -?[\d.]+\s+right median (-?[\d.]+)", log.read_text()) if log.exists() else None
+    return max(float(m.group(1)), float(m.group(2))) if m else 0.0
+
+
 def qc(clips: list[dict], spec: dict, args) -> list[dict]:
     limits = {k: v for k, v in spec.get("qc", {}).items() if k in clip_qc.LIMITS}
     cfg = spec["segment_cfg"]
@@ -191,6 +197,8 @@ def qc(clips: list[dict], spec: dict, args) -> list[dict]:
         old = json.loads(cached.read_text())
         if old.get("limits", {}) == limits and [r["name"] for r in old["clips"]] == [c["name"] for c in clips]:
             rows = old["clips"]
+            for r, c in zip(rows, clips):  # added after the full build: read from the logs, no re-check needed
+                r.setdefault("foot_gap_mm", foot_gap_mm(c["grounded"].with_suffix(".txt")))
             clip_qc.flag(rows, limits)  # flags depend only on the stored numbers: re-flag with the current rules
             for r in rows:
                 r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
@@ -202,6 +210,7 @@ def qc(clips: list[dict], spec: dict, args) -> list[dict]:
     for c, r, w in zip(clips, k1, wrists):
         r.update({k: v for k, v in c.items() if k not in ("smplx", "k1", "grounded")},
                  hand_fwd_human_m=w, ik_fail_frames=ik_failures(c["grounded"].with_suffix(".txt")),
+                 foot_gap_mm=foot_gap_mm(c["grounded"].with_suffix(".txt")),
                  max_foot_move_cm=cfg.tier_a_cm if c["tier"] == "A" else cfg.tier_b_cm)
         rows.append(r)
     clip_qc.flag(rows, limits)
