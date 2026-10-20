@@ -375,8 +375,12 @@ def main() -> None:
 
     t0 = time.time()
     by_clip: dict[int, list[dict]] = {}
-    for batch in batches:
+    for b, batch in enumerate(batches, 1):
         by_clip.update(run_batch(env, policy, cmd, batch, ctx))
+        if len(batches) > 1:
+            spent = time.time() - t0
+            left = spent / b * (len(batches) - b)
+            print(f"[eval] batch {b}/{len(batches)} done ({len(batch)} clip{'s' * (len(batch) > 1)}), {spent / 60:.1f} min, ~{left / 60:.0f} min left", flush=True)
     elapsed = time.time() - t0
 
     rollouts = {names[c]: by_clip[c] for c in eval_clips}

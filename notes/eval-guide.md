@@ -49,6 +49,10 @@ uv run eval-tracking --wandb-run-path ... --clips wave_000508 wave_001104       
 The JSON has `clips` (one summary per clip) and `rollouts` (each tagged with its `clip`). Episode
 length is set from the longest clip, so long clips are never cut short. More: `multi-clip.md`.
 
+Big sets run in batches of `--max-envs` robots (4096 / 50 = 81 clips per batch) and print
+`[eval] batch 3/6 done (81 clips), 14.2 min, ~14 min left` after each. Times (Oct 19): the laptop
+(35 W cap) needs > 1 h for `beat2-full-torso-val` (474 clips); the club GPU is ~5x faster.
+
 ## Comparing runs
 Evaluate both on the **same motion version** (`--registry-name ...:vN`); otherwise you compare clips,
 not policies. Compare the JSON `summary` blocks, or just the printed tables.
