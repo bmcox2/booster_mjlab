@@ -837,20 +837,42 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - `foot_gap_mm` 30: higher foot's median height ≥ 30 mm. `feet_pair`: left/right foot overlap > 5 mm for > 0.1 s
 - On the current build: +96 severe (75 in train-a/b: 71 foot gap, 7 feet overlap); 20 of the 75 were quarantined (27% vs ~2.5%); catches 3 of the 19 always-failing clips. Takes effect at the next `beat2_batch` run (train-a/b `:v2`); not rebuilt yet
 
+## 2026-10-21: dataset rebuild with the new Gate 1 rules + exclude list; harness warm-up
+
+**Changes** (commit `53ed6cf`)
+- Spec `[qc] exclude_clips`: the 19 clips both 10-19 policies always fail (`beat2_batch.mark_excluded`, shown as a severe flag "excluded in the spec" in the QC report). New set **`train-ab`** (Tier A + B in one file) for the final run, so nobody has to combine A + B by hand
+- Harness (`MultiMotionCommand`): time at the cap counted **once per env step** (was per sampling call, so 2400 ≈ 40–50 it; now ≈ 100 it as intended); **no quarantine before env step 24,000 (~1,000 it)** (`quarantine_warmup_steps`; the cap still applies). New test `test_no_quarantine_during_warmup`; 15/15 tests pass. `notes/multi-clip.md` updated
+- `beat2_batch.py`: the cached QC gets `foot_gap_mm` from the ground_clip logs, so the new rules applied without re-checking 16k clips
+
+**Build** (laptop, governor on, 51 min: segmentation + QC re-flag ~10 min, the rest combine + upload at ~8 MB/s): 1,402 severe excluded (was 1,290)
+
+| set | clips | hours | artifact (alias `current`) |
+|---|---|---|---|
+| train-a | 7,171 (−52) | 23.16 | `beat2-full-torso-train-a:v2` |
+| train-b | 3,605 (−39) | 5.67 | `-train-b:v2` |
+| **train-ab** | 10,776 | 28.83 | **`-train-ab:v0`** (final run) |
+| val | 472 (−2) | 1.28 | `-val:v1` |
+| heldout-val | 194 (=) | 0.78 | `-heldout-val:v0` (same file) |
+| test / heldout-test / heldout-conv | 1,294 / 405 / 1,612 | 3.46 / 1.36 / 5.82 | `:v2` each |
+
+- Leakage check clean on all three training files. W&B: descriptions on every new version, `current` alias on the versions above
+- val changed (2 clips): checkpoint picks against `val:v0` and `val:v1` aren't directly comparable. heldout-val is unchanged
+- Not done: the shoulder-singularity test (scratch data from 10-20 is gone; rebuild the flagged + control subset to run it); the optional Tier A end trim
+
 ## Next
 Current step: **tracker exit criteria** (`roadmap.md` table), in parallel with the speech loop.
 
 **1. Tracker (criteria 1–7)**
-- Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Quarantine review done (2026-10-20 entry): before the final run, rebuild train-a/b with the two new Gate 1 rules (`beat2_batch.py --spec tools/datasets/beat2_full.toml`, cached up to QC), and drop the 19 always-failing clips (Gate 1 catches 3; needs a per-clip exclude list in the spec)
+- Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Bad clips found later go into `[qc] exclude_clips` in `tools/datasets/beat2_full.toml`, then rerun `beat2_batch.py` (cached up to QC, ~50 min with uploads)
 - Arm-joint speed: confirm the shoulder-singularity guess (angle between upper arm and shoulder-pitch axis vs arm-joint speed, failing windows vs controls). If confirmed: a QC flag on arm-joint speed > ~10 rad/s, and a fix in the GMR IK config (penalize shoulder-pitch / elbow-yaw velocity)
 - Optional: trim ~0.5 s off Tier A clip ends that stop at a step onset (`beat2_segments.py`)
-- Harness calibration before the final run: count steps at the cap per env step (now per sampling call, so 2400 ≈ 40–50 it), no quarantine before ~it 1,000 (half of all quarantines came at it 250–600 and were learnable). After a run, eval the flagged clips (20 rollouts, ~10 min) and review only the ones still failing
+- After each run: eval the flagged clips (`eval-tracking --clips ...`, 20 rollouts) and review only the ones still failing (harness calibration done 2026-10-21)
 - Criterion 3: policy-only ONNX export (obs → actions; reference fed live), then a sim2sim script in plain MuJoCo at the real control rate
 - Criterion 2: `eval-tracking --push` on heldout-val; ranges beyond training; observation latency/noise if missing
 - Criterion 6: action-rate / jerk metric in `eval-tracking`
 - Criterion 5: design transitions (idle hold, clip-to-clip, return to idle); likely stitched training clips with idle stretches
 - Milestone checks with `1de2pner`: no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio
-- Final run (after hands-on K1 + ankle model): A+B data (`logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
+- Final run (after hands-on K1 + ankle model): A+B data **`beat2-full-torso-train-ab:v0`** (`--registry-name`; replaces the hand-combined `logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
 
 **2. Speech loop on the laptop** (no robot): follow `speech_plan.md`, starting with step 1 (v0, push-to-talk) and the decisions table
 
@@ -859,7 +881,7 @@ Current step: **tracker exit criteria** (`roadmap.md` table), in parallel with t
 - Lead: milestone 1 change + the speech/LLM extension; ankle model (standard vs `-Parallel`); then update `proposal.md`
 
 **4. Cleanup**
-- Club PC (disk 97% full, shared): keep `logs/motions/beat2-full-torso-train-ab.npz` (7.7 GB) for the final run; `rm -rf artifacts/beat2-full-torso-train-b:v1` (1.5 GB); `wandb artifact cache cleanup 1GB`
+- Club PC (disk 97% full, shared): `rm logs/motions/beat2-full-torso-train-ab.npz` (7.7 GB, superseded by `train-ab:v0`); `rm -rf artifacts/beat2-full-torso-train-b:v1` (1.5 GB); `wandb artifact cache cleanup 1GB`
 - Laptop: `wandb artifact cache cleanup 1GB` (`~/.cache/wandb` ~21 GB). Keep `~/robotics/data/beat2_full_torso` (per-clip cache) until the next rebuild; `~/robotics/data/beat2_full/` can go
 - W&B: tag `1de2pner` `keep`, `wbitlbqw` `superseded`; tag the dead runs (`2h7ih3ij`, `kxzph3yx`, `vbsmv80n`, `rm0fhes8`, `jf0opr8t`, `aorrbkep`, `y3k07rwu`, `4vldt40m`) `superseded`; move dataset `current` aliases to the versions in use
 - Unexplained: run `y3k07rwu` died at it 244 (log cut at `Exception in thread Thread-1`). Train output is `tee`d to `logs/train_*.txt` now

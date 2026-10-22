@@ -1,6 +1,6 @@
 # BEAT2 Segments (human side)
 
-Generated 2026-10-18 by `tools/beat2_segments.py` from `tools/datasets/beat2_full.toml`. Human motion only (before GMR).
+Generated 2026-10-21 by `tools/beat2_segments.py` from `tools/datasets/beat2_full.toml`. Human motion only (before GMR).
 
 - **Tier A:** maximal stretches with both ankles within 10 cm of their median spot, starting and ending on planted frames (ankles < 0.1 m/s), cut into 4–20 s clips.
 - **Tier B:** foot shifts inside 25 cm stretches that Tier A leaves out, each with 2 s of standing on either side (so B overlaps A by its padding), same clip lengths. Names end in `_shift`.
