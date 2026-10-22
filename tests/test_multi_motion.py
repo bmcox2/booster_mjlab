@@ -239,19 +239,23 @@ def test_limit_clip_shares_quarantine():
 def test_failing_clip_is_capped_quarantined_and_logged(cmd):
     """End to end on the real command: clip 1 fails constantly -> held at its cap -> quarantined,
     listed in flagged_clips, and from then on sampled at its plain length share."""
-    caps, after = cmd.clip_share_caps.clone(), cmd.cfg.quarantine_after_steps
+    caps, after, warmup = cmd.clip_share_caps.clone(), cmd.cfg.quarantine_after_steps, cmd.cfg.quarantine_warmup_steps
+    env_step = cmd._env.common_step_counter
     cmd.clip_share_caps = torch.full_like(caps, 0.6)
-    cmd.cfg.quarantine_after_steps = 3
+    cmd.cfg.quarantine_after_steps, cmd.cfg.quarantine_warmup_steps = 3, 0
     b1 = slice(int(cmd.clip_bin_starts[1]), int(cmd.clip_bin_starts[1] + cmd.clip_bin_counts[1]))
     try:
         ids = torch.arange(NUM_ENVS)
         for step in range(3):
+            cmd._env.common_step_counter = env_step + 1 + step
             cmd.bin_failed_count.zero_()
             cmd.bin_failed_count[b1] = 100.0
             assert not cmd.clip_quarantined[1]
             cmd._adaptive_sampling(ids)
             assert cmd.metrics["sampling_capped_clips"][0] == 1
             assert torch.isclose(cmd.metrics["sampling_top1_clip_share"][0], torch.tensor(0.6))
+            cmd._adaptive_sampling(ids)  # a second resample in the same env step doesn't count
+            assert int(cmd.clip_capped_steps[1]) == step + 1
         assert cmd.clip_quarantined.tolist() == [False, True]
         assert [f["clip"] for f in cmd.flagged_clips] == [cmd.clip_names[1]]
         assert (cmd.bin_failed_count[b1] == 0).all()
@@ -259,7 +263,37 @@ def test_failing_clip_is_capped_quarantined_and_logged(cmd):
         length_share = float(cmd.clip_bin_counts[1]) / cmd.bin_count
         assert torch.isclose(cmd.clip_sampling_share()[1], torch.tensor(length_share * cmd.cfg.quarantine_share_ratio))
     finally:
-        cmd.clip_share_caps, cmd.cfg.quarantine_after_steps = caps, after
+        cmd.clip_share_caps, cmd.cfg.quarantine_after_steps, cmd.cfg.quarantine_warmup_steps = caps, after, warmup
+        cmd._env.common_step_counter = env_step
+        cmd._last_cap_step = -1
+        cmd.clip_quarantined.zero_()
+        cmd.clip_capped_steps.zero_()
+        cmd.flagged_clips.clear()
+        cmd.bin_failed_count.zero_()
+
+
+def test_no_quarantine_during_warmup(cmd):
+    """A clip held at its cap during the warm-up is capped but not quarantined; the count of env
+    steps at the cap carries on, so it is quarantined right after the warm-up if still stuck."""
+    caps, after, warmup = cmd.clip_share_caps.clone(), cmd.cfg.quarantine_after_steps, cmd.cfg.quarantine_warmup_steps
+    env_step = cmd._env.common_step_counter
+    cmd.clip_share_caps = torch.full_like(caps, 0.6)
+    cmd.cfg.quarantine_after_steps, cmd.cfg.quarantine_warmup_steps = 2, env_step + 5
+    b1 = slice(int(cmd.clip_bin_starts[1]), int(cmd.clip_bin_starts[1] + cmd.clip_bin_counts[1]))
+    try:
+        ids = torch.arange(NUM_ENVS)
+        for k in range(1, 7):
+            cmd._env.common_step_counter = env_step + k
+            cmd.bin_failed_count.zero_()
+            cmd.bin_failed_count[b1] = 100.0
+            cmd._adaptive_sampling(ids)
+            assert bool(cmd.clip_quarantined[1]) == (k >= 5), k
+            if k < 5:
+                assert cmd.metrics["sampling_capped_clips"][0] == 1
+    finally:
+        cmd.clip_share_caps, cmd.cfg.quarantine_after_steps, cmd.cfg.quarantine_warmup_steps = caps, after, warmup
+        cmd._env.common_step_counter = env_step
+        cmd._last_cap_step = -1
         cmd.clip_quarantined.zero_()
         cmd.clip_capped_steps.zero_()
         cmd.flagged_clips.clear()

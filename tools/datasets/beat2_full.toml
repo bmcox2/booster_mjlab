@@ -47,6 +47,11 @@ speakers = "train"
 takes = ["train", "additional"]
 tiers = ["B"]
 
+[sets.train-ab]                                      # A + B in one file: the data the final run uses
+speakers = "train"                                   # (A+B won the 10-19 comparison, notes/log.md)
+takes = ["train", "additional"]
+tiers = ["A", "B"]
+
 [sets.val]                                           # picks the checkpoint
 speakers = "train"
 takes = ["val"]
@@ -74,3 +79,13 @@ tiers = ["A", "B"]
 
 [qc]                                                 # Gate 1 limits; defaults and meaning in tools/clip_qc.py
 exclude = "severe"                                   # none / severe / flagged
+# Clips Gate 1 passes but both 10-19 full-BEAT2 policies (wbitlbqw, 1de2pner) fail at the same second,
+# 0-19/20 rollouts (notes/log.md 2026-10-20). Mostly extreme arm-joint speed (shoulder near singular?),
+# broken leg retargets, Katya's toe-resting leg. 3 of them are also caught by the new foot rules.
+exclude_clips = [
+    "carla_0_57_57_t18-26", "itoi_0_7_7_t61-76_shift", "katya_0_66_66_t20-40", "katya_1_2_2_t429-434_shift",
+    "katya_1_2_2_t89-95", "lawrence_0_101_101_t42-55", "lawrence_0_98_98_t26-36_shift", "lawrence_0_98_98_t41-45",
+    "lawrence_1_10_10_t127-133_shift", "miranda_1_1_1_t79-94", "scott_0_91_91_t37-44_shift",
+    "scott_1_1_1_t254-260_shift", "scott_1_2_2_t182-187_shift", "scott_1_3_3_t277-281_shift", "scott_1_4_4_t136-143",
+    "scott_1_6_6_t286-293_shift", "solomon_0_23_23_t17-30_shift", "solomon_0_56_56_t15-30", "wayne_0_33_33_t4-9_shift",
+]

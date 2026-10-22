@@ -200,8 +200,7 @@ def qc(clips: list[dict], spec: dict, args) -> list[dict]:
             for r, c in zip(rows, clips):  # added after the full build: read from the logs, no re-check needed
                 r.setdefault("foot_gap_mm", foot_gap_mm(c["grounded"].with_suffix(".txt")))
             clip_qc.flag(rows, limits)  # flags depend only on the stored numbers: re-flag with the current rules
-            for r in rows:
-                r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
+            mark_excluded(rows, exclude, spec)
             print(f"[qc] {len(rows)} clips, cached {cached}")
             return rows
     k1 = clip_qc.check_all([c["grounded"] for c in clips], args.workers, limits)
@@ -214,9 +213,22 @@ def qc(clips: list[dict], spec: dict, args) -> list[dict]:
                  max_foot_move_cm=cfg.tier_a_cm if c["tier"] == "A" else cfg.tier_b_cm)
         rows.append(r)
     clip_qc.flag(rows, limits)
-    for r in rows:
-        r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
+    mark_excluded(rows, exclude, spec)
     return rows
+
+
+def mark_excluded(rows: list[dict], exclude: str, spec: dict) -> None:
+    """Set r['excluded'] from the QC flags (`exclude` mode) and the spec's `qc.exclude_clips` list
+    (clips Gate 1 passes but training shows are broken; listed as a severe flag so reports show why)."""
+    by_hand = set(spec.get("qc", {}).get("exclude_clips", []))
+    unknown = by_hand - {r["name"] for r in rows}
+    if unknown:
+        print(f"[warn] qc.exclude_clips names {len(unknown)} clips that aren't in this build, e.g. {sorted(unknown)[:3]}")
+    for r in rows:
+        if r["name"] in by_hand:
+            r["flags"] = r["flags"] + ["excluded in the spec (fails in training)"]
+            r["severe"] = r["severe"] + ["excluded in the spec (fails in training)"]
+        r["excluded"] = bool((exclude == "severe" and r["severe"]) or (exclude == "flagged" and r["flags"]))
 
 
 def write_qc(rows: list[dict], spec: dict, artifacts: dict, path: Path) -> None:

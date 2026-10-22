@@ -198,6 +198,7 @@ class MultiMotionCommand(MotionCommand):
         self.clip_share_caps = (self.cfg.max_clip_share_ratio * length_share).clamp(max=1.0)
         self.clip_capped_steps = torch.zeros(self.num_clips, dtype=torch.long, device=self.device)
         self.clip_quarantined = torch.zeros(self.num_clips, dtype=torch.bool, device=self.device)
+        self._last_cap_step = -1  # env step last counted in clip_capped_steps
         self.flagged_clips: list[dict] = []
         for name in ("sampling_capped_clips", "sampling_quarantined_clips", "sampling_top1_clip_share"):
             self.metrics[name] = torch.zeros(self.num_envs, device=self.device)
@@ -237,9 +238,16 @@ class MultiMotionCommand(MotionCommand):
     def _update_quarantine(self, capped: torch.Tensor) -> None:
         """Count how long each clip has been held at its cap; quarantine it past
         ``quarantine_after_steps``. A clean clip gets oversampled for a while and then learned;
-        a broken one (retarget glitch, impossible pose) stays at the cap."""
+        a broken one (retarget glitch, impossible pose) stays at the cap.
+
+        Counted once per env step (sampling runs several times per step: resets and clip ends), and
+        nothing is quarantined during ``quarantine_warmup_steps``, while every clip is still hard."""
+        step = int(self._env.common_step_counter)
+        if step == self._last_cap_step:
+            return
+        self._last_cap_step = step
         self.clip_capped_steps = torch.where(capped, self.clip_capped_steps + 1, 0)
-        if self.cfg.quarantine_after_steps <= 0:
+        if self.cfg.quarantine_after_steps <= 0 or step < self.cfg.quarantine_warmup_steps:
             return
         new = (self.clip_capped_steps >= self.cfg.quarantine_after_steps) & ~self.clip_quarantined
         if not bool(new.any()):
@@ -504,7 +512,12 @@ class MultiMotionCommandCfg(MotionCommandCfg):
     (full BEAT2: a 13 s clip ~0.3%). Stops one bad clip from taking over (0lg80c7d: 70-77%;
     10-19 full-A: one bin 39%). Never binds on a clip that is >= 1/20 of the data. inf: off."""
     quarantine_after_steps: int = 2400
-    """Quarantine a clip held at its cap for this many steps in a row (~100 iterations). 0: never."""
+    """Quarantine a clip held at its cap for this many env steps in a row (~100 iterations at 24 steps
+    per iteration). 0: never."""
+    quarantine_warmup_steps: int = 24_000
+    """No quarantine before this env step (~1,000 iterations). In the 10-19 full-BEAT2 runs half of all
+    quarantines came at it 250-600, and every clip only one of the two runs flagged was learned by the
+    end (notes/log.md 2026-10-20). Clips are still capped during the warm-up."""
     quarantine_share_ratio: float = 1.0
     """A quarantined clip's share of starts, as a multiple of its length share (0: never start
     there). It stays in training but is no longer oversampled. Logged to flagged_clips.json."""
