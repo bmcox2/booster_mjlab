@@ -859,15 +859,42 @@ Plan: "K1 Co-Speech Gesture: Full BEAT2 Dataset Plan" (Oct 18). Phase 2 (retarge
 - val changed (2 clips): checkpoint picks against `val:v0` and `val:v1` aren't directly comparable. heldout-val is unchanged
 - Not done: the shoulder-singularity test (scratch data from 10-20 is gone; rebuild the flagged + control subset to run it); the optional Tier A end trim
 
+## 2026-10-28: robot demo prep: deployable task, policy-only ONNX, sim2sim
+
+The lead suggested a small demo on the robot. Plan, status and questions for the lead: **`notes/demo_plan.md`**.
+
+**Findings**
+- `1de2pner` can't go on the robot: its policy observes `motion_anchor_pos_b` (needs the robot's world position) and `base_lin_vel` (an IMU doesn't measure it). Retrain without them, like mjlab's G1 `has_state_estimation=False`
+- Upstream measured the real K1's joint limits (`d0b9567`): upper-arm twist ±1.9 (was ±2.27), shoulder pitch ≥ −2.95 (was −3.32), elbow bend shifted. `train-ab:v0` goes past them on 5.8% of frames (2,602 clips), almost all `Right_Elbow_Yaw` > 2.25 (≤ 0.19 rad over; left elbow only 0.09%)
+- Laptop dGPU off the PCI bus again (`lspci` shows no NVIDIA; driver modules present): the known dropout. CPU only today
+
+**Changes**
+- Merged `upstream/main` (real joint limits, optimizer config refactor, terrain friction 0 → 0.01); `main` fast-forwarded to upstream. Tests pass
+- `Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation` (`has_state_estimation=False`: actor drops the two terms, critic keeps them). `entropy_coef` default 0.001 (was a CLI flag in the 10-19 runs)
+- `K1MotionTrackingRunner` writes **`policy.onnx`** next to every checkpoint and to W&B: the policy only (obs → actions, normalizer included), metadata = joint order, default pose, PD gains, action scale, observation names + sizes, `control_dt`. `uv run export-tracking-policy` for old checkpoints (builds the env on a synthetic standing reference, no download; checks ONNX vs PyTorch: 1e-6)
+- `src/booster_mjlab/deploy/` (numpy + onnxruntime only, for the robot too): `TrackingPolicy`, `build_observation` (mjlab's terms from encoders + IMU + reference), `Reference` (lead-in blend from standing, end hold, heading alignment). `tests/test_deploy.py`: matches mjlab's actor observation to 1e-5
+- `uv run sim2sim`: plain MuJoCo K1 (task actuators, torque-speed limits, training solver settings), checks the ONNX gains against the model, starts standing (or on frame 0), lead-in → clip → hold, sensor delay, pushes, video. `onnxruntime` added as a dependency
+
+**sim2sim check** (`1de2pner` exported, `--start reference --privileged`: true anchor position / velocity, sim only), held-out-val clips
+
+| clip | sim2sim | eval-tracking |
+|---|---|---|
+| `li_0_10_10_t19-23_shift` | OK, hands 2.3 cm | 50/50, 3.02 cm |
+| `nidal_0_14_14_t73-92` | OK, 2.9 cm | 50/50, 3.46 cm |
+| `nidal_0_9_9_t52-70` | OK, 3.2 cm | 50/50, 3.94 cm |
+
+- `nidal_0_14_14_t73-92` with 20 / 40 ms sensor delay + pushes: 3/3 each, 2.8 cm. The plain-MuJoCo model and the deploy observation code match training
+- Not tested yet: the lead-in from standing (needs the no-state-estimation policy)
+
 ## Next
-Current step: **tracker exit criteria** (`roadmap.md` table), in parallel with the speech loop.
+Current step: **robot demo** (`notes/demo_plan.md`): lead's answers → train `Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation` on `train-ab:v0` → eval + sim2sim from standing → pick clips → SDK backend → bring-up. Tracker exit criteria (`roadmap.md` table) in parallel.
 
 **1. Tracker (criteria 1–7)**
 - Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Bad clips found later go into `[qc] exclude_clips` in `tools/datasets/beat2_full.toml`, then rerun `beat2_batch.py` (cached up to QC, ~50 min with uploads)
 - Arm-joint speed: confirm the shoulder-singularity guess (angle between upper arm and shoulder-pitch axis vs arm-joint speed, failing windows vs controls). If confirmed: a QC flag on arm-joint speed > ~10 rad/s, and a fix in the GMR IK config (penalize shoulder-pitch / elbow-yaw velocity)
 - Optional: trim ~0.5 s off Tier A clip ends that stop at a step onset (`beat2_segments.py`)
 - After each run: eval the flagged clips (`eval-tracking --clips ...`, 20 rollouts) and review only the ones still failing (harness calibration done 2026-10-21)
-- Criterion 3: policy-only ONNX export (obs → actions; reference fed live), then a sim2sim script in plain MuJoCo at the real control rate
+- Criterion 3: policy-only ONNX export + sim2sim **done 2026-10-28** (`export-tracking-policy`, `sim2sim`); left: the robot backend (Booster SDK)
 - Criterion 2: `eval-tracking --push` on heldout-val; ranges beyond training; observation latency/noise if missing
 - Criterion 6: action-rate / jerk metric in `eval-tracking`
 - Criterion 5: design transitions (idle hold, clip-to-clip, return to idle); likely stitched training clips with idle stretches

@@ -24,7 +24,7 @@ K1 constraints: ~0.95 m, 22 DoF; head 2 (yaw, pitch), arms 4 each (shoulder ×3,
 - Fork of IntelligentRoboticsLab/booster_mjlab. `origin` = bmcox2/booster_mjlab, `upstream` = IntelligentRoboticsLab.
 - Work on branch `gesture-tracking`; keep `main` matching upstream. Never open PRs to upstream.
 - `notes/log.md` = run log. Update it every session and push.
-- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `multi-clip.md` (MultiMotionCommand design, diff from mjlab, per-clip metrics), `beat2-full-segments.md` / `gate1-calibration.md` (full BEAT2 dataset), `plan.md` (Slice 0 checklist; nearly done), `speech_plan.md` (speech + LLM loop: steps, decisions, K1 audio questions), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
+- Also in `notes/`: `roadmap.md` (whole-project steps), `eval-guide.md` (how to run/read `eval-tracking`), `multi-clip.md` (MultiMotionCommand design, diff from mjlab, per-clip metrics), `beat2-full-segments.md` / `gate1-calibration.md` (full BEAT2 dataset), `plan.md` (Slice 0 checklist; nearly done), `demo_plan.md` (robot demo: status, commands, questions for the lead), `speech_plan.md` (speech + LLM loop: steps, decisions, K1 audio questions), `proposal.md` (project plan), `wandb-guide.md` (how to read training charts / when to stop), `papers.md` (DeepMimic + anchor paper mapped to code), `glossary.md` (RL terms).
 - Slash commands in `.claude/commands/`: `/log-session` (write log entry), `/analyze-run` (read WandB charts).
 - Never commit `logs/`, `wandb/`, `data/`, checkpoints, or datasets.
 
@@ -32,10 +32,11 @@ Key paths:
 - `src/booster_mjlab/tasks/tracking/tracking_env_cfg.py`: K1 tracking task (modifies mjlab's base tracking cfg; rewards/obs/terminations come from `mjlab.tasks.tracking.tracking_env_cfg` in `.venv`). Swaps in `MultiMotionCommandCfg`.
 - `src/booster_mjlab/tasks/tracking/multi_motion_command.py`: `MultiMotionCommand` (subclass of mjlab's `MotionCommand`; never edit mjlab, it is pinned). Includes the sampling safety harness (per-clip cap, quarantine, `flagged_clips.json`; `notes/multi-clip.md`).
 - `src/booster_mjlab/tasks/tracking/runner.py`: `K1MotionTrackingRunner`: skips mjlab's motion-bundled ONNX export above 1 GiB (full BEAT2 OOM-killed the trainer), writes `flagged_clips.json`.
-- `src/booster_mjlab/tasks/tracking/config/k1/`: `env_cfgs.py`, `rl_cfg.py`.
+- `src/booster_mjlab/tasks/tracking/config/k1/`: `env_cfgs.py`, `rl_cfg.py`. Tasks `Mjlab-Tracking-Flat-Booster-K1` and the deployable `...-K1-No-State-Estimation` (no anchor position / linear velocity in the policy's input).
+- `src/booster_mjlab/deploy/`: robot-agnostic deploy code (numpy + onnxruntime): `TrackingPolicy` (`policy.onnx` + metadata), `build_observation`, `Reference` (lead-in / end hold / heading). `tests/test_deploy.py` checks it against mjlab.
 - `src/booster_mjlab/robots/booster_k1/`: robot model (`xmls/`), constants, actuators.
 - `src/booster_mjlab/motion/`: motion loading.
-- `src/booster_mjlab/scripts/`: `train`, `play`, `upload_motion`, `combine_motions`, `visualize_motions`, `eval_tracking`.
+- `src/booster_mjlab/scripts/`: `train`, `play`, `upload_motion`, `combine_motions`, `visualize_motions`, `eval_tracking`, `export_tracking_policy` (policy-only ONNX for a checkpoint), `sim2sim` (plain MuJoCo, robot-style loop).
 - `tests/test_multi_motion.py`: `uv run --with pytest pytest tests/ -q` (CPU, needs `logs/motions/waves_2clip.npz`).
 - `tools/ground_clip.py`: ground + flatten feet of GMR clips before upload.
 - `tools/beat2_to_gmr.py`: BEAT2 take → GMR input (`--find-still` ranks windows). Runs with GMR's venv or the booster venv.
@@ -57,7 +58,8 @@ uv run visualize-motions --dataset whirlwind-ams/lafan_locomotion_k1 --task <TAS
 uv run upload-motion --input-file <clip.pkl> --entity bmcox2-university-of-illinois-urbana-champaign
 uv run train Mjlab-Tracking-Flat-Booster-K1 --registry-name <artifact printed by upload-motion> --env.scene.num-envs 4096
 uv run combine-motions <artifact> <artifact> ... --artifact-name <name>   # multi-clip file, same train command
-uv run eval-tracking --wandb-run-path bmcox2-university-of-illinois-urbana-champaign/mjlab/<run-id>   # one row per clip
+uv run eval-tracking --wandb-run-path bmcox2-university-of-illinois-urbana-champaign/mjlab/<run-id>   # one row per clip (--task for the No-State-Estimation task)
+uv run sim2sim --wandb-run-path <entity>/mjlab/<run-id> --motion-file <npz> --clip <name>   # plain MuJoCo from standing; --obs-delay-steps, --push, --video
 ```
 Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Tracking-Flat-Booster-K1` (project).
 
@@ -102,4 +104,5 @@ Tasks used: `Mjlab-Velocity-Flat-Amp-DA-Muon-Booster-K1` (baseline), `Mjlab-Trac
 - 2026-10-19: **A+B wins: `1de2pner` `model_5999.pt`** (train-a:v1 + train-b:v1, 6k it, 2.1 h, 226 quarantined). Held-out-val 194/194 clips, 0 failed rollouts, hands 3.46 cm (tier A 3.39, tier B 4.48); A (`wbitlbqw`): 192/194, 3.39 cm (3.26 / 5.02). Val: tier B 6.02 → 5.61 cm, tier A 3.92 → 3.97. entropy_coef 0.001 fixed the mean_std drift. 3 Solomon val clips fail 50/50 at the same instant in both runs (bad data). Next: check those clips, harness calibration (count per env step, warm-up), longer final run on A+B, milestone checks. Details: `notes/log.md`.
 - 2026-10-20: quarantine review (277 clips of A + A+B): clips flagged by one run pass 100% at the end (noise from it 250–600); **19 clips fail with both policies** (list in `notes/log.md`). Causes: foot held off the floor (broken leg retarget; Katya's toe-resting leg), crossed feet, extreme arm-joint speed (shoulder singularity suspected, unconfirmed), step onsets at Tier A ends. New severe Gate 1 rules `foot_gap_mm` (30) and `feet_pair` overlap (+75 training clips); not rebuilt yet.
 - 2026-10-21: rebuilt full BEAT2 with the new rules + spec `exclude_clips` (19 clips): **`beat2-full-torso-train-ab:v0`** (10,776 clips, 28.8 h; final-run data), train-a/b `:v2`, val `:v1`, test/heldout-test/heldout-conv `:v2`, heldout-val `:v0` (alias `current`). Harness: cap time counted per env step, no quarantine before ~it 1,000.
-- Open questions for lead: which K1 ankle model (standard vs `-Parallel`).
+- 2026-10-28: **robot demo prep** (`notes/demo_plan.md`): merged upstream (real-robot joint limits); `1de2pner` can't deploy (observes anchor position + linear velocity) → new task `Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation`; `policy.onnx` (policy only) at every checkpoint + `export-tracking-policy`; `deploy/` package + `sim2sim` (validated with `1de2pner`: held-out clips 2.3–3.2 cm, robust to 40 ms delay + pushes). Next: lead's answers, then train the deployable policy on `train-ab:v0`.
+- Open questions for lead (list in `notes/demo_plan.md`): SDK low-level mode, joint order, which K1 ankle model (standard vs `-Parallel`).

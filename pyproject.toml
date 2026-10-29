@@ -8,6 +8,7 @@ requires-python = ">=3.13"
 dependencies = [
     "huggingface-hub>=1.19.0",
     "mjlab",
+    "onnxruntime>=1.31.1",
     "pandas>=3.0.3",
     "pyarrow>=24.0.0",
     "scipy>=1.16.3",
@@ -25,6 +26,7 @@ combine-motions = "booster_mjlab.scripts.combine_motions:main"
 motions-to-hf = "booster_mjlab.scripts.motions_to_hf:main"
 export-web-demo = "booster_mjlab.scripts.export_web_demo:main"
 export-tracking-policy = "booster_mjlab.scripts.export_tracking_policy:main"
+sim2sim = "booster_mjlab.scripts.sim2sim:main"
 
 [build-system]
 requires = ["uv_build>=0.9.5,<0.10.0"]
