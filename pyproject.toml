@@ -24,6 +24,7 @@ eval-tracking = "booster_mjlab.scripts.eval_tracking:main"
 combine-motions = "booster_mjlab.scripts.combine_motions:main"
 motions-to-hf = "booster_mjlab.scripts.motions_to_hf:main"
 export-web-demo = "booster_mjlab.scripts.export_web_demo:main"
+export-tracking-policy = "booster_mjlab.scripts.export_tracking_policy:main"
 
 [build-system]
 requires = ["uv_build>=0.9.5,<0.10.0"]

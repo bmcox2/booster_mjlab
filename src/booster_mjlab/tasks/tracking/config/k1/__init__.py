@@ -12,3 +12,13 @@ register_mjlab_task(
     rl_cfg=booster_k1_tracking_ppo_runner_cfg(),
     runner_cls=K1MotionTrackingRunner,
 )
+
+# Deployable variant: the policy sees only what the real K1 measures (joint encoders, IMU orientation
+# and turn rate) plus the reference. notes/demo_plan.md.
+register_mjlab_task(
+    task_id="Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation",
+    env_cfg=booster_k1_flat_tracking_env_cfg(has_state_estimation=False),
+    play_env_cfg=booster_k1_flat_tracking_env_cfg(play=True, has_state_estimation=False),
+    rl_cfg=booster_k1_tracking_ppo_runner_cfg(),
+    runner_cls=K1MotionTrackingRunner,
+)

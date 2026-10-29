@@ -43,8 +43,15 @@ _TRACKING_ARM_ACTION_SCALE = {
 
 def booster_k1_flat_tracking_env_cfg(
     play: bool = False,
+    has_state_estimation: bool = True,
 ) -> ManagerBasedRlEnvCfg:
-    """Create Booster K1 flat terrain tracking configuration."""
+    """Create Booster K1 flat terrain tracking configuration.
+
+    ``has_state_estimation=False`` is the deployable variant: the policy (actor) no longer sees
+    ``motion_anchor_pos_b`` (reference trunk position relative to the robot's, which needs the
+    robot's world position) or ``base_lin_vel`` (trunk linear velocity; the IMU measures only
+    acceleration and turn rate). The critic keeps both (sim only). Same as mjlab's G1 variant.
+    """
     cfg = make_tracking_env_cfg()
 
     base_robot_cfg = get_k1_robot_cfg()
@@ -177,6 +184,10 @@ def booster_k1_flat_tracking_env_cfg(
     )
 
     cfg.viewer.body_name = "Trunk"
+
+    if not has_state_estimation:
+        for name in ("motion_anchor_pos_b", "base_lin_vel"):
+            del cfg.observations["actor"].terms[name]
 
     # Apply play mode overrides.
     if play:
