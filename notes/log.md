@@ -886,8 +886,46 @@ The lead suggested a small demo on the robot. Plan, status and questions for the
 - `nidal_0_14_14_t73-92` with 20 / 40 ms sensor delay + pushes: 3/3 each, 2.8 cm. The plain-MuJoCo model and the deploy observation code match training
 - Not tested yet: the lead-in from standing (needs the no-state-estimation policy)
 
+## 2026-11-05: deploy audit against the club's `booster_deploy`
+
+Analysis only, no code changed, nothing trained. Full findings: **`notes/deploy_audit.md`**. Reference clone at `~/projects/booster_deploy` (`main` `9a677ad`, `hoi-dev` `295ce53`).
+
+**Results**
+- Verdict: **needs config fixes on `y1r48dhc`**, not deployable as-is. `1de2pner` needs retraining (it observes `motion_anchor_pos_b` and `base_lin_vel`)
+- Found run **`y1r48dhc`** (`deploy-nse-train-ab`, No-State-Estimation task, `train-ab:v0`, 6k it, finished 2026-10-29, not logged here until now). `policy.onnx`: `obs [1, 122]` → `actions [1, 22]`, normalizer baked in, no history. **No eval or sim2sim from standing yet**
+- `booster_deploy` `main` has `tasks/beyond_mimic/`, a K1 motion-tracking task: use it as the playback template and `mjlab_velocity` as the config template. Not reusable unchanged: Isaac joint order (`sim_joint_names`), 119 inputs (no `projected_gravity`), action scale from `K1_CFG` (arms 0.875 vs 0.35)
+- `K1_CFG` mismatches to override: default pose, Kp/Kd (training head 4/0.25, arms 20/2, legs 80/4, ankles 50/2), effort limits, `prepare_mode`. Matches: joint order by position, 50 Hz, 50 fps clips, link masses and inertias
+- Real K1 bags on `hoi-dev` (`/low_state`, 500 Hz): home pose in the expected order and signs. **Ankles are physically parallel, but the interface is serial**: drive motors match `parallel_ankle_ik.py` to ~1 mrad. Keep training serial
+- `tests/test_deploy.py`: 2 passed
+
+**Open risk**
+- How the firmware applies ankle `kp`/`kd`. Per motor, at the home pose, ankle roll would be 12.7 / 0.51 instead of the trained 50 / 2, far outside the ±20% randomization, and that could force a retrain. Ask the lead or test on the gantry (`deploy_audit.md`)
+
+**Sim2sim from standing** (`y1r48dhc` `policy.onnx`, plain MuJoCo, 15 held-out clips, CPU; table in `deploy_audit.md`)
+- **0 falls in 225 runs**, hands 3.05–3.11 cm, drift ~5 cm: with prepare-pose hold, actuator lag up to 40 ms, sensor delay, pushes, and the ankle what-ifs
+- **The old `sim2sim` default fell (15/15 at ~0.75 s), an artifact:** `--settle-s` 1.0 held home at the policy's gains and the robot tipped 22° before the policy started. Default changed to 0 in `scripts/sim2sim.py`. Checked with the CLI on 3 clips that used to fall (no falls; Stewart with 40 ms delay + pushes 3/3); `tests/test_deploy.py` still passes
+- Ankle what-ifs (gains if applied per motor, linkage inertia and torque, home-pose values in the serial model): no falls, action rate up about a third. Lowers the retrain risk without removing it
+- Quick-check sweep scripts were scratch only, not in the repo
+
+**Eval: `y1r48dhc` vs `1de2pner`** (`model_5999`, `heldout-val:v0`, club GPU, `tools/eval_summary.py`)
+
+| group | `1de2pner` | `y1r48dhc` |
+|---|---|---|
+| all | 194/194, 3.46 cm | 193/194, 3.82 cm |
+| tier A | 162/162, 3.39 | 161/162, 3.76 |
+| tier B | 32/32, 4.48 | 32/32, 4.55 |
+| ayana | 47/47, 3.75 | 47/47, 4.23 |
+| kieks | 31/31, 3.07 | 30/31 (99.9% of rollouts), 3.81 |
+| li | 28/28, 3.47 | 28/28, 3.80 |
+| nidal | 44/44, 3.34 | 44/44, 2.88 |
+| stewart | 30/30, 3.52 | 30/30, 4.51 |
+| yingqing | 14/14, 4.13 | 14/14, 4.81 |
+
+- Dropping the two sim-only inputs cost 0.36 cm of hand error overall (~10%) and one clip with a failed rollout. Stewart is worst (+1.0 cm); Nidal improved
+- `val:v1` summary didn't run: the traceback was cut off at file reading, most likely no `*_val_v1.json` yet. The failing `kieks` clip isn't identified yet
+
 ## Next
-Current step: **robot demo** (`notes/demo_plan.md`): lead's answers → train `Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation` on `train-ab:v0` → eval + sim2sim from standing → pick clips → SDK backend → bring-up. Tracker exit criteria (`roadmap.md` table) in parallel.
+Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): finish `val:v1` eval + check the failing `kieks` clip → lead's answers + settle ankle gains → build the task in `booster_deploy` → sim2sim there → bring-up. Tracker exit criteria (`roadmap.md` table) in parallel.
 
 **1. Tracker (criteria 1–7)**
 - Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Bad clips found later go into `[qc] exclude_clips` in `tools/datasets/beat2_full.toml`, then rerun `beat2_batch.py` (cached up to QC, ~50 min with uploads)
