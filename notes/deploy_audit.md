@@ -84,7 +84,7 @@ Retraining means a fresh run. The input layer changes from 128 to 122, so `1de2p
 | `policy.onnx` | `obs [1, 122]` → `actions [1, 22]`, `has_state_estimation: False` |
 | End-of-training numbers | Episode length 500 (full 10 s), `error_body_pos` 0.016, `mean_std` 0.113, 0 terminations in the final summary |
 | **Held-out eval** (2026-11-05, `heldout-val:v0`, 50 rollouts per clip) | 193/194 clips all-pass, 100.0% of rollouts (rounded), hands **3.82 cm**. `1de2pner`: 194/194, 100.0%, 3.46 cm |
-| **Missing** | `val:v1` comparison |
+| **Val eval** (`val:v1`) | 468/472 clips all-pass, 99.3% of rollouts, hands **4.57 cm**. `1de2pner`: 466/472, 99.5%, 4.39 cm. The failing clips fail at the same moment in both policies, so they look like bad data |
 
 ---
 
@@ -295,11 +295,11 @@ Limits: one physics setup with no randomized friction, gains or masses; 15 of 19
 | Policy | Verdict |
 |---|---|
 | `1de2pner` and any `Mjlab-Tracking-Flat-Booster-K1` run | **Needs retraining.** It needs position and velocity the robot doesn't have. `y1r48dhc` is that retraining |
-| `y1r48dhc` | **Needs a deploy task with config fixes.** No retraining needed unless the ankle check or the remaining `val:v1` comparison says otherwise. Held-out eval: 193/194 clips, hands 3.82 cm |
+| `y1r48dhc` | **Needs a deploy task with config fixes.** No retraining needed unless bring-up shows an ankle problem. Held-out 193/194 clips, hands 3.82 cm; val 468/472, 4.57 cm |
 
 ## Next steps, in order
 
-1. **Evaluate `y1r48dhc`.** `heldout-val:v0` done: 193/194 clips, 3.82 cm vs `1de2pner`'s 194/194, 3.46 cm. Left: `val:v1`, and find the one failing `kieks` clip.
+1. **Evaluate `y1r48dhc`: done.** Held-out 193/194 clips, 3.82 cm (`1de2pner` 194/194, 3.46 cm). Val 468/472, 4.57 cm (`1de2pner` 466/472, 4.39 cm). It's the deployment candidate.
 2. **Sim2sim from standing: done on 15 clips, 0 falls in 225 runs** (section above).
 3. **Ask the lead:** how the firmware applies ankle `kp`/`kd`; firmware version (the README says both ≥ 1.7.2 and ≥ 1.4); which joint limits are real; the Ctrl-C exit mode; gantry and e-stop. Update `demo_plan.md`: questions 1, 3 and 4 are mostly answered here.
 4. **Settle the ankle gains** (lead's answer or gantry test), before spending more GPU time. Retrain only if they fall outside the ±20% randomization.

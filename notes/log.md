@@ -922,10 +922,54 @@ Analysis only, no code changed, nothing trained. Full findings: **`notes/deploy_
 | yingqing | 14/14, 4.13 | 14/14, 4.81 |
 
 - Dropping the two sim-only inputs cost 0.36 cm of hand error overall (~10%) and one clip with a failed rollout. Stewart is worst (+1.0 cm); Nidal improved
-- `val:v1` summary didn't run: the traceback was cut off at file reading, most likely no `*_val_v1.json` yet. The failing `kieks` clip isn't identified yet
+- `kieks_0_9_9_t19-38`: 1/50 failed, at 0.52 s (`ee_body_pos`), so near the start. The lead-in on the robot avoids the eval's jittered start
+
+**Eval on `val:v1`** (472 clips, ~5 min each on the club GPU; `1de2pner` rerun, its older `val` numbers were on `v0`)
+
+| group | `1de2pner` | `y1r48dhc` |
+|---|---|---|
+| all | 466/472, 99.5% of rollouts, 4.39 cm | 468/472, 99.3%, 4.57 cm |
+| tier A | 281/282, 3.97 | 281/282, 4.25 |
+| tier B | 185/190, 5.48 | 187/190, 5.40 |
+
+- Hand error +0.18 cm (~4%). Speakers vary: worst Kexin (2.77 → 4.26) and Katya (4.31 → 5.89); several improve (Zhao, Lawrence, Goto, Solomon, Scott, Lu, Jorge)
+- `y1r48dhc` failures, all `ee_body_pos`:
+
+| clip | `y1r48dhc` failed | `1de2pner` failed | first failure |
+|---|---|---|---|
+| `solomon_0_13_13_t29-40_shift` | 50/50 | 50/50 | ~10.2 s, both |
+| `solomon_0_16_16_t19-23_shift` | 50/50 | 50/50 | ~3.1 s, both |
+| `solomon_0_16_16_t59-67_shift` | 50/50 | 10/50 | ~7.7 s, both |
+| `lawrence_0_12_12_t26-38` | 6/50 | 7/50 | 0.08 s, both |
+
+- The clips look like the problem: both policies first fail at the same moment on all four. `t59-67` is new to the notes and `y1r48dhc` handles it worse (50/50 vs 10/50). `solomon_0_12_12_t58-77_shift`, in the older watch list, isn't in `val:v1`
+- `1de2pner` alone also failed 1/50 on `solomon_0_14_14_t0-15_shift` and `lawrence_0_12_12_t65-72_shift`
+- **Decision: `y1r48dhc` `model_5999` is the deployment candidate.** No retrain needed from these evals
+
+**Demo clip candidates** (held-out Tier A; arm motion from the local `heldout-val` file)
+- Lowest hand error is a poor way to pick: the 25 lowest-error clips of the 72 that pass 50/50 with foot tilt ≤ 10° are mostly quiet Nidal and Kieks clips (hand speed above 0.4 m/s < 5% of the time for most). The strongest motion (Ayana, Yingqing) often exceeds `Right_Elbow_Yaw`'s real limit, by up to 0.19 rad
+- Shortlist, none tested with `eval-tracking --push` yet:
+
+| clip | length | mean hand speed | hands fast | over limit | `eval-tracking` |
+|---|---|---|---|---|---|
+| `ayana_0_15_15_t75-95` | 19.9 s | 0.20 m/s | 26% | 0.006 rad, 4% of frames | 50/50, 3.1 cm, tilt 8.9° |
+| `ayana_0_11_11_t8-23` | 15.2 s | 0.16 m/s | 20% | none | 50/50, 3.1 cm, tilt 6.6° |
+| `ayana_0_9_9_t52-69` | 17.2 s | 0.22 m/s | 30% | none | not checked (outside the top 25) |
+
+- Sim from standing, 6 candidates incl. `ayana_0_16_16_t15-30`, `yingqing_0_9_9_t48-59`, `kieks_0_14_14_t18-35`: repo MuJoCo 72 runs (lag 25/40 ms, pushes, ankle what-ifs), 0 falls; `booster_deploy` controller 12 runs (0/40 ms command lag), 0 falls, targets never clamped. `ayana_0_16_16_t15-30` dropped: a torque limit reached on ~14% of steps (others 1–3%; which joint not checked)
+- Audio: only 5 Scott takes are downloaded (`wave16k/`), so these clips have no audio on disk yet
+
+**Deploy task** (`~/projects/booster_deploy`, local branch `gesture-tracking`, not committed; guide: `docs/k1_gesture_deploy.md` there)
+- `tasks/gesture_tracking/`: task `k1_gesture_tracking`. Observation order from the ONNX metadata, training gains, no joint remapping, lead-in + end hold, heading alignment, targets clamped to `k1.xml` limits, tilt safety stop, `exit_mode="damping"`. `scripts/deploy.py` and `render_video.py` got `--motion`
+- This repo: `tools/export_deploy_clip.py` (one clip per file, with joint and body names), `tools/make_deploy_golden.py` (numbers from `booster_mjlab.deploy` for the task's tests)
+- Tests: `tests/test_gesture_tracking.py` 2 passed: observation (1e-5) and reference match `booster_mjlab.deploy`
+- Refuses at startup: 128-input `1de2pner`, velocity `baseline.onnx`, combined motion file, `K1_CFG` default gains, wrong default pose
+- `booster_deploy`'s `MujocoController` on `K1_22dof.xml` (ground friction 0.4, condim 1, unlike training), 3 held-out clips, each with 0 / 20 / 40 ms command lag: 9/9 no falls, drift ≤ 5 cm, max trunk tilt 11.6° (`li` Tier B)
+- Not tested: the real-robot controller path (needs ROS and the robot); parallel-ankle model (the `ParallelAnkle` code is on `hoi-dev`)
+- Decided: the ankle `kp`/`kd` question is deferred; keep trained gains and deal with it if bring-up shows a problem
 
 ## Next
-Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): finish `val:v1` eval + check the failing `kieks` clip → lead's answers + settle ankle gains → build the task in `booster_deploy` → sim2sim there → bring-up. Tracker exit criteria (`roadmap.md` table) in parallel.
+Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): confirm demo clips (watch videos, `--push` eval, download their audio) → commit the deploy task → add a dry-run mode → bring-up (compute without sending first). Tracker exit criteria (`roadmap.md` table) in parallel.
 
 **1. Tracker (criteria 1–7)**
 - Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Bad clips found later go into `[qc] exclude_clips` in `tools/datasets/beat2_full.toml`, then rerun `beat2_batch.py` (cached up to QC, ~50 min with uploads)
