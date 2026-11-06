@@ -60,8 +60,10 @@ class Config:
     start: str = "stand"
     """stand: robot in its home pose, reference leads in (the demo). reference: robot placed exactly on
     frame 0 (like eval-tracking)."""
-    settle_s: float = 1.0
-    """stand: seconds holding the home pose with plain PD before the policy starts."""
+    settle_s: float = 0.0
+    """stand: seconds holding the home pose with plain PD before the policy starts. These are the policy's
+    gains, too soft to balance without it: the K1 tips ~22 deg in 1 s, so keep this near 0. The real robot
+    is held upright at much stiffer prepare gains until the policy starts."""
     blend_s: float = 2.0
     """Lead-in: seconds blending the reference from the home pose to the clip's first frame."""
     hold_start_s: float = 1.0
@@ -188,7 +190,7 @@ def reset(sim: Sim, cfg: Config, policy: TrackingPolicy, ref: Reference) -> None
         d.qpos[sim.qadr] = policy.default_joint_pos
         d.ctrl[sim.ctrl] = policy.default_joint_pos
     mujoco.mj_forward(sim.model, d)
-    if cfg.start == "stand":  # what Booster's controller would be doing before the switch
+    if cfg.start == "stand":  # plain PD at the policy's gains (see Config.settle_s)
         for _ in range(round(cfg.settle_s / sim.model.opt.timestep)):
             physics_step(sim)
 
