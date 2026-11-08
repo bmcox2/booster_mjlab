@@ -968,8 +968,27 @@ Analysis only, no code changed, nothing trained. Full findings: **`notes/deploy_
 - Not tested: the real-robot controller path (needs ROS and the robot); parallel-ankle model (the `ParallelAnkle` code is on `hoi-dev`)
 - Decided: the ankle `kp`/`kd` question is deferred; keep trained gains and deal with it if bring-up shows a problem
 
+## 2026-11-08: dry-run mode and demo audio
+
+**Audio**
+- Downloaded 4 BEAT2 takes' audio (`H-Liu1997/BEAT2`, same source as the motion): `21_ayana_0_15_15`, `21_ayana_0_11_11`, `21_ayana_0_9_9`, `27_yingqing_0_9_9`
+- `tools/export_deploy_clip.py --audio`: writes `<clip>.wav` (16-bit, 16 kHz), the exact segment span from `segments.json`. Lengths match the motion to 0.01 s
+- Clips + audio for the 4 candidates in `booster_deploy/tasks/gesture_tracking/motions/` (gitignored)
+- Dubbed sim videos: `logs/videos/<clip>_audio.mp4` (sim2sim from standing, audio delayed 3 s for the lead-in). 4/4 no falls, hands 2.2–3.1 cm
+
+**`booster_deploy` (branch `gesture-tracking`, not committed yet)**
+- `deploy.py --audio <wav>`: plays it with `aplay` on the machine running the policy, starting at the clip's first frame (checked in MuJoCo: frame 150, after the 3 s lead-in). A missing player prints a warning and the motion continues
+- `deploy.py --dry-run` (robot only): reads `/low_state` and runs the policy, but never publishes `/joint_ctrl` and never changes the robot's mode. Logs every step to `logs/dry_run_<task>_<time>.npz`
+- `scripts/check_dry_run.py`: loop timing, stale `/low_state`, trunk tilt, joint limits, and the gap between the first 0.1 s of targets and the joints
+- Tested without a robot, using faked ROS / `booster_interface` modules and simulated `/low_state` at 500 Hz: 0 publishes and 0 mode-change calls, 50 Hz loop (p99 22 ms), log written. Correct wiring: first targets ≤ 0.22 rad, passes. Left/right shoulder roll swapped: 1.18 rad, flagged
+- Not tested on the robot; the real ROS path runs for the first time at bring-up
+
+**Demo clip ranking** (watched the dubbed videos): 1. `ayana_0_9_9_t52-69`, 2. `ayana_0_15_15_t75-95`, 3. `yingqing_0_9_9_t48-59`, 4. `ayana_0_11_11_t8-23`
+- The top pick has no `eval-tracking` numbers checked yet (it wasn't in the top-25 list), so it needs the normal eval and the `--push` eval before the robot. Couldn't ssh to the club GPU today
+- `logs/videos/*_audio.mp4` also matches the older `0j0flpxj_scott_audio.mp4` / `s5cdzms7_scott_audio.mp4`, which play in the same loop
+
 ## Next
-Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): confirm demo clips (watch videos, `--push` eval, download their audio) → commit the deploy task → add a dry-run mode → bring-up (compute without sending first). Tracker exit criteria (`roadmap.md` table) in parallel.
+Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): normal + `--push` eval on the ranked clips (club GPU; command in the 2026-11-08 session) → bring-up: dry run + `check_dry_run.py` first, then gantry hold → clip → floor → demo with audio. Speech loop work continues in parallel. Tracker exit criteria (`roadmap.md` table) in parallel.
 
 **1. Tracker (criteria 1–7)**
 - Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Bad clips found later go into `[qc] exclude_clips` in `tools/datasets/beat2_full.toml`, then rerun `beat2_batch.py` (cached up to QC, ~50 min with uploads)
