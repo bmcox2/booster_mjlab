@@ -987,6 +987,26 @@ Analysis only, no code changed, nothing trained. Full findings: **`notes/deploy_
 - The top pick has no `eval-tracking` numbers checked yet (it wasn't in the top-25 list), so it needs the normal eval and the `--push` eval before the robot. Couldn't ssh to the club GPU today
 - `logs/videos/*_audio.mp4` also matches the older `0j0flpxj_scott_audio.mp4` / `s5cdzms7_scott_audio.mp4`, which play in the same loop
 
+## 2026-11-08: speech loop v0 (speech_plan step 1) + first benchmarks
+
+**Setup**
+- `speech/`: own uv project (Python 3.12). `uv sync`; Groq key in `speech/.env` (gitignored). Stages `speech.audio|stt|llm|tts`, the loop `speech.loop`, voice sampler `speech.voices`; each reads/writes files in `speech/runs/<session>/turn_NN/` and runs alone on saved files. Usage: `speech/README.md`
+- Models: STT faster-whisper `small.en` int8 on CPU; LLM Groq `openai/gpt-oss-20b` (reasoning low) via the OpenAI-compatible API; TTS Kokoro-82M on CPU, voice **`bm_daniel`** (picked from the 13 English male voices)
+- Audio: laptop mic + laptop speakers through PipeWire (`config.toml` device `pipewire` = the choice in Settings → Sound)
+
+**Results**
+- Step 1 exit criteria met: 6-turn spoken conversation with history, every artifact opens, LLM/voice switch in `config.toml`
+- Wait per turn ~3.5–6 s: STT 1.6–2.2 s, LLM 0.2–0.4 s, TTS 1.5–3.9 s (grows with reply length)
+- Benchmarks (`speech/bench/stt.py`, `tts.py`; tables in `notes/speech_bench.md`): **Groq whisper-large-v3 0.29 s median vs local small.en 1.58 s, and better**; all 3 Groq LLMs < 0.5 s to the whole reply; Kokoro first sentence ~1.0 s at 4 threads (faster than the default 14). Streamed estimate with Groq STT: ~2 s; the rest must come from TTS + end-of-turn
+
+**Problems & fixes**
+- AirPods silent on playback once their mic was used (Bluetooth call mode, HFP mSBC) → laptop mic + speakers
+- faster-whisper 1.2.1 broke on `av` 19 (`metadata_errors`) → pinned `av<16`
+- Kokoro re-downloaded spaCy `en_core_web_sm` every run → added as a URL dependency (hatch `allow-direct-references`)
+- Groq dropped Llama 3.1 8B; models on 2026-11-08: gpt-oss-20b/120b, qwen3.8-27b, Whisper, Orpheus TTS
+- Whisper mishears project words ("Booster Lab" → "Ibusa Lab")
+- dGPU still missing after two reboots (`lspci` shows no NVIDIA), so everything runs on CPU
+
 ## Next
 Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): normal + `--push` eval on the ranked clips (club GPU; command in the 2026-11-08 session) → bring-up: dry run + `check_dry_run.py` first, then gantry hold → clip → floor → demo with audio. Speech loop work continues in parallel. Tracker exit criteria (`roadmap.md` table) in parallel.
 
@@ -1002,7 +1022,13 @@ Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`):
 - Milestone checks with `1de2pner`: no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio
 - Final run (after hands-on K1 + ankle model): A+B data **`beat2-full-torso-train-ab:v0`** (`--registry-name`; replaces the hand-combined `logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
 
-**2. Speech loop on the laptop** (no robot): follow `speech_plan.md`, starting with step 1 (v0, push-to-talk) and the decisions table
+**2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Step 1 done 2026-11-08. Step 2 (instrumentation):
+- STT provider switch in `speech/stt.py` + config: Groq `whisper-large-v3` default, local `small.en` fallback; Whisper prompt/hotwords for Booster, K1, SIGRobotics
+- `torch.set_num_threads(4)` for Kokoro
+- Event timestamps on one monotonic clock → `timing.json` per turn + `latency.jsonl`; summary script (median / p90 per stage)
+- Fixed test set: ~10 recorded utterances (short, long, mid-sentence pauses) with hand-written transcripts, replayed from WAV; extend `speech/bench/` to it
+- Optional: accept Orpheus terms in the Groq console, then benchmark it against Kokoro (first audio, quality)
+- Later: personality / system prompt (the bot is bland and "how can I help"-y); compare gpt-oss-120b / qwen3.8-27b on it
 
 **3. Hardware / people**
 - Hands-on K1: compute variant, SDK joint control, custom policy vs Booster's controller; confirm mic array, speaker, battery, Doubao integration
