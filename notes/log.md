@@ -1047,7 +1047,8 @@ Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`):
 - Optional once: check logged times against a phone recording of you + the laptop (plan step 2.5)
 - TTS first audio ≤ ~0.15 s: accept Orpheus terms in the Groq console and benchmark it; Kokoro on GPU when the dGPU is back; maybe Cartesia / ElevenLabs Flash
 - System prompt: open with a short phrase; personality later (bot is bland)
-- Step 3: Silero VAD + Smart Turn (end-of-turn), then step 4 streaming (first chunk)
+- Step 3 in progress: `speech.vad` (Silero VAD + silence endpointing, `--testset` replay) and `speech.loop --hands-free` (half-duplex) built 2026-11-08. Left: live tests (20 turns with pauses, 1 min typing/fan noise), Smart Turn v3.2, then step 4 streaming (first chunk)
+- Fixed 2026-11-08: Kokoro thread count (was 14, and 1 once Silero loads); test set rerun: reply ready 2.58 / 3.93 s
 
 **3. Hardware / people**
 - Hands-on K1: compute variant, SDK joint control, custom policy vs Booster's controller; confirm mic array, speaker, battery, Doubao integration

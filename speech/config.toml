@@ -5,6 +5,16 @@ input_device = "pipewire"    # PortAudio only sees ALSA names; choose the headse
 output_device = "pipewire"
 sample_rate = 16000          # Whisper wants 16 kHz mono
 
+[vad]
+# Hands-free listening (speech/src/speech/vad.py). Times in milliseconds.
+threshold = 0.5              # Silero speech probability that starts an utterance
+neg_threshold = 0.35         # once speaking, below this counts as silence (hysteresis)
+silence_ms = 600             # this much silence after speech = your turn is over
+min_speech_ms = 250          # shorter bursts are treated as noise (clicks, coughs)
+preroll_ms = 300             # audio kept from just before speech started
+max_utterance_s = 30         # force a turn end after this long
+echo_tail_ms = 300           # after the robot speaks, ignore the mic this long (speaker ring-out)
+
 [stt]
 provider = "groq"            # "groq" (cloud, ~0.3 s) or "local" (this laptop, ~1.6 s on CPU)
 fallback = "local"           # used when the provider fails (no internet, rate limit); "" = none

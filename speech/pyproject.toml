@@ -14,6 +14,8 @@ dependencies = [
     # English word-analysis model Kokoro needs; listed here so uv keeps it (else Kokoro re-downloads it every run)
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "python-dotenv",
+    "silero-vad>=6.2.3",
+    "onnxruntime>=1.31.1",
 ]
 
 [build-system]

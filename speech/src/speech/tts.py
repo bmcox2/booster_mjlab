@@ -54,6 +54,12 @@ class TextToSpeech:
         voice: override config.toml's voice (used by the voice sampler).
         """
         voice = voice or self.cfg["voice"]
+        if "cpu_threads" in self.cfg:
+            import torch
+            # How many CPU threads the model math uses. Set right before every use, because other
+            # libraries change it when they load (Kokoro's resets it to 14, Silero VAD's sets 1).
+            # More is not faster on this laptop: its CPU mixes fast and slow cores; 4 was best.
+            torch.set_num_threads(self.cfg["cpu_threads"])
         start = time.monotonic()
         # Kokoro splits long text into chunks and yields one result per chunk. Word times inside a
         # result count from that chunk's start, so we add the length of the audio before it.

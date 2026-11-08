@@ -55,6 +55,8 @@ class Pipeline:
         """
         sample_rate = self.cfg["audio"]["sample_rate"]
         turn.mkdir(parents=True, exist_ok=True)
+        if "endpoint" not in timer.events:  # push-to-talk / replay: the turn ended at speech_end
+            timer.mark("endpoint", timer.t0)
         meta = {"mode": mode, "label": self.label}
 
         transcript = self.stt.transcribe(audio)
@@ -106,12 +108,18 @@ class Pipeline:
 def summary_line(record: dict) -> str:
     s = record["stages"]
     reply_ready = s.get("response", record["events"].get("tts_done", 0.0))
-    return (f"answer after {reply_ready:.2f} s: speech-to-text {s.get('stt', 0):.2f}, "
+    endpoint = f"end of turn {s['endpoint']:.2f}, " if s.get("endpoint") else ""
+    return (f"answer after {reply_ready:.2f} s: {endpoint}speech-to-text {s.get('stt', 0):.2f}, "
             f"LLM {s.get('llm_total', 0):.2f} (first sentence {s.get('llm_first_sentence', 0):.2f}), "
             f"text-to-speech {s.get('tts', 0):.2f}")
 
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Talk with the robot.")
+    parser.add_argument("--hands-free", action="store_true",
+                        help="no Enter presses: the mic listens and detects when you stop (step 3)")
+    args = parser.parse_args()
     cfg = load_config()
     in_dev = find_device(cfg["audio"]["input_device"], "input")
     out_dev = find_device(cfg["audio"]["output_device"], "output")
@@ -122,6 +130,9 @@ def main() -> None:
     print(f"ready ({pipeline.label})\n")
 
     session = RUNS_DIR / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    if args.hands_free:
+        hands_free(pipeline, cfg, in_dev, out_dev, session)
+        return
     turn_number = 0
     while True:
         audio = record_until_enter(sample_rate, in_dev,
@@ -135,6 +146,37 @@ def main() -> None:
 
     print(f"saved {turn_number} turns in {session}")
     print("timing summary: uv run python -m speech.latency")
+
+
+def hands_free(pipeline: "Pipeline", cfg: dict, in_dev: int, out_dev: int, session: Path) -> None:
+    """Listen -> answer -> listen... The mic is ignored while the robot talks (half-duplex),
+    because without echo cancellation the laptop mic would hear the robot and answer itself."""
+    from speech.vad import Listener
+
+    listener = Listener(cfg["vad"], in_dev)
+    print(f"Hands-free: just talk. Your turn ends after {cfg['vad']['silence_ms']} ms of silence. "
+          "Ctrl+C to quit.\n")
+    turn_number = 0
+    try:
+        while True:
+            print("(listening...)", end="", flush=True)
+            utterance = listener.next_utterance()
+            print("\r" + " " * 15 + "\r", end="")
+            listener.pause()
+            timer = TurnTimer(start=utterance.speech_end)  # 0 = your last sound
+            timer.mark("endpoint", utterance.endpoint)
+            timer.extra["vad"] = utterance.info()
+            turn_number += 1
+            pipeline.run_turn(utterance.audio, session / f"turn_{turn_number:02d}", timer, out_dev,
+                              mode="live")
+            listener.resume()
+            print()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        listener.close()
+    print(f"\nsaved {turn_number} turns in {session}")
+    print("timing summary: uv run python -m speech.latency --mode live")
 
 
 if __name__ == "__main__":

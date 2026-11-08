@@ -5,7 +5,9 @@ time.monotonic(): a clock that only moves forward and is not changed by the syst
 so differences between two readings are reliable.
 
 Events (in order):
-    speech_end       you stopped talking (push-to-talk: second Enter; step 3: the VAD decides)
+    speech_end       you stopped talking (push-to-talk: second Enter; hands-free: your last sound)
+    endpoint         decided your turn is over (push-to-talk: same as speech_end; hands-free:
+                     after silence_ms of silence)
     stt_done         transcript ready
     llm_first_token  first piece of the reply arrived
     llm_first_sentence  first full sentence arrived (when streamed TTS could start, step 4)
@@ -25,7 +27,8 @@ LATENCY_LOG = RUNS_DIR / "latency.jsonl"
 
 # Stage name -> (from event, to event).
 STAGES = {
-    "stt": ("speech_end", "stt_done"),
+    "endpoint": ("speech_end", "endpoint"),  # waiting to be sure you're done (0 with push-to-talk)
+    "stt": ("endpoint", "stt_done"),
     "llm_first_token": ("stt_done", "llm_first_token"),
     "llm_first_sentence": ("stt_done", "llm_first_sentence"),
     "llm_total": ("stt_done", "llm_done"),

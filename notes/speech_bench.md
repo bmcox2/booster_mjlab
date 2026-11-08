@@ -182,3 +182,32 @@ Same 12 replies as the Kokoro streaming estimate, voice `daniel`, first chunk th
   never goes silent for 6 s.
 - Quality: samples in `speech/runs/_voices/orpheus_{daniel,austin,troy}.wav` vs Kokoro
   `bm_daniel.wav` (same sentence). Orpheus also takes emotion tags (e.g. `<laugh>`), not tried.
+
+## 2026-11-08: correction (Kokoro threads) + test set rerun
+
+- **Bug:** the `cpu_threads = 4` setting never reached `tts.py`, so every test-set run above labeled
+  `bm_daniel@4threads` really ran Kokoro at **14 threads**. Also, loading Silero VAD sets torch to
+  **1 thread** (Kokoro 2.7× slower: 4.8 s vs 1.8 s for one reply). Fix: `TextToSpeech.synthesize`
+  sets the thread count right before every call. `speech/bench/tts.py` set it explicitly, so the
+  thread comparison table there is right.
+- Rerun, Kokoro truly at 4 threads, Groq turbo + hints, corrected references (12 items):
+  STT 0.30 / 0.38 s, LLM 0.30 / 0.43 s, **TTS 1.86 / 3.31 s**, **reply ready 2.58 / 3.93 s**
+  (median / p90; was 3.58 / 5.54). Word errors 1.4% (one "Ok"→"Okay"-type miss, one in the ramble).
+
+## 2026-11-08: Step 3, silence-only endpointing on the test set (`speech.vad --testset`)
+
+Silero VAD (ONNX, 0.27 ms per 32 ms frame), threshold 0.5 / 0.35 (hysteresis), min speech 250 ms,
+pre-roll 300 ms. Each test recording is one sentence, so 2+ utterances = cut mid-sentence.
+
+| silence_ms | Sentences cut (of 12) | Endpoint delay |
+|---|---|---|
+| 300 | 1 (`pause_short`, at the pause after "I want to know") | 320 ms |
+| 450 | 1 (same) | 480 ms |
+| **600 (default)** | **0** | 610 ms |
+| 800 | 0 | 800–830 ms |
+
+- Silence alone can't meet both exit criteria (≤ 1 cut in 20 turns *and* < 400 ms delay): the
+  pause in `pause_short` is ~0.5 s, longer than the 400 ms target. That is the case for Smart Turn
+  (short silence when the sentence sounds finished, long when it doesn't).
+- `pause_long` (meant as a 2 s pause) was never cut: the recorded pause is short, or soft sounds kept
+  the probability above 0.35. Need real live tests with deliberate pauses.

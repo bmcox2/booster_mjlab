@@ -20,6 +20,8 @@ Audio devices are chosen in Ubuntu Settings → Sound (`config.toml` uses `pipew
 | `uv run python -m speech.llm [TURN]` | Reply (Groq, OpenAI-compatible API) | `transcript.json` → `request.json`, `reply.json` |
 | `uv run python -m speech.tts [TURN]` | Text-to-speech (Kokoro) + play (`--no-play`) | `reply.json` → `reply.wav`, `tts.json` (word times) |
 | `uv run python -m speech.voices [NAMES]` | Compare Kokoro voices | → `runs/_voices/<voice>.wav` |
+| `uv run python -m speech.loop --hands-free` | Conversation without Enter presses (VAD ends your turn after `[vad] silence_ms`) | same files + `vad` info in `timing.json` |
+| `uv run python -m speech.vad [--testset] [--silence-ms N]` | Live speech detector (saves each utterance), or replay the test set to see cut sentences | → `runs/_vad/<time>/utt_NN.wav/.json` |
 | `uv run python -m speech.latency [--mode testset] [--last N]` | Median / p90 time per stage, per setup | `runs/latency.jsonl` |
 | `uv run python -m speech.testset record [--only ID]` | Record the fixed test set (12 scripts) | → `testset/<id>.wav`, `testset/testset.json` |
 | `uv run python -m speech.testset run [--set stt.provider=local ...]` | Replay the test set through the pipeline (no mic/speaker), score transcripts | → `runs/_testset/<time>/<id>/`, `runs/latency.jsonl` |
