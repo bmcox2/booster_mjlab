@@ -211,3 +211,31 @@ pre-roll 300 ms. Each test recording is one sentence, so 2+ utterances = cut mid
   (short silence when the sentence sounds finished, long when it doesn't).
 - `pause_long` (meant as a 2 s pause) was never cut: the recorded pause is short, or soft sounds kept
   the probability above 0.35. Need real live tests with deliberate pauses.
+
+## 2026-11-08: Step 3, live test 1 (silence 600 ms) + Smart Turn v3.2
+
+**Live, hands-free, silence-only 600 ms (9 turns):** endpoint 0.64 s, STT 0.33, LLM 0.34, TTS 0.99 /
+1.93 s, **response 2.27 s median / 3.32 s p90** (you stop talking → audio starts). 1 minute of typing /
+desk taps / fan: **0 false turns**. 1 turn cut mid-thought ("...just testing the conversation, um,"),
+and 600 ms felt too quick for natural pauses.
+
+**Smart Turn v3.2** (`smart-turn-v3.2-cpu.onnx`, onnxruntime 1 thread, Whisper features from
+`transformers`): ~47 ms per check on the CPU. On the 9 live turns: the cut-off turn 0.01 (= not
+finished), normal endings 0.96–0.99, a laugh 0.47, one long question 0.07.
+
+Test-set replay (12 one-sentence recordings, `speech.vad --testset`):
+
+| Rule | Cut | Endpoint delay median / max |
+|---|---|---|
+| Silence 600 ms | 0 | 608 / 608 ms |
+| Smart Turn @ 200 ms, threshold 0.5, one check per pause | 1 (ramble: mid pause scored 0.77) | 224 / 224 ms |
+| Smart Turn @ 300 ms, threshold 0.5 | 0 | 320 / 2016 ms (one ending scored 0.41 → 2 s timeout) |
+| **Smart Turn @ 200 ms, threshold 0.8, re-check every 300 ms, 2 s fallback (new default)** | **0** | **224 / 224 ms** |
+
+- Test-set real endings scored ≥ 0.86; the only mid-sentence pause above 0.5 scored 0.77. 0.8 sits
+  between; with only 12 items it may need moving. Re-checks let an unsure ending (0.4–0.8 at first)
+  finish before the 2 s fallback.
+- Same rule on the 9 live turns: cut-off turn now waits (0.006–0.02 on every re-check); 7 of 8
+  others end at 224 ms; the long question ends at 1.7 s on a later re-check.
+- Not yet verified live: exit criteria (20 turns with deliberate pauses: ≤ 1 cut; median delay
+  < 400 ms). Expected response with Smart Turn: ~2.27 − 0.64 + 0.22 ≈ 1.85 s median.

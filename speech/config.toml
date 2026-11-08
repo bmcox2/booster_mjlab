@@ -9,7 +9,12 @@ sample_rate = 16000          # Whisper wants 16 kHz mono
 # Hands-free listening (speech/src/speech/vad.py). Times in milliseconds.
 threshold = 0.5              # Silero speech probability that starts an utterance
 neg_threshold = 0.35         # once speaking, below this counts as silence (hysteresis)
-silence_ms = 600             # this much silence after speech = your turn is over
+smart_turn = true            # ask Smart Turn v3.2 whether you're finished (false = silence rule only)
+smart_turn_check_ms = 200    # pause length that triggers the question
+smart_turn_recheck_ms = 300  # while the pause lasts, ask again this often
+smart_turn_threshold = 0.8   # probability that counts as "finished" (0.5 cut the test-set ramble at a 0.77 pause)
+smart_turn_max_silence_ms = 2000  # if it says "not finished", end anyway after this much silence
+silence_ms = 600             # without Smart Turn: this much silence = your turn is over
 min_speech_ms = 250          # shorter bursts are treated as noise (clicks, coughs)
 preroll_ms = 300             # audio kept from just before speech started
 max_utterance_s = 30         # force a turn end after this long
