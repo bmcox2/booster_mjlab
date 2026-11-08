@@ -20,8 +20,14 @@ Audio devices are chosen in Ubuntu Settings → Sound (`config.toml` uses `pipew
 | `uv run python -m speech.llm [TURN]` | Reply (Groq, OpenAI-compatible API) | `transcript.json` → `request.json`, `reply.json` |
 | `uv run python -m speech.tts [TURN]` | Text-to-speech (Kokoro) + play (`--no-play`) | `reply.json` → `reply.wav`, `tts.json` (word times) |
 | `uv run python -m speech.voices [NAMES]` | Compare Kokoro voices | → `runs/_voices/<voice>.wav` |
+| `uv run python -m speech.latency [--mode testset] [--last N]` | Median / p90 time per stage, per setup | `runs/latency.jsonl` |
+| `uv run python -m speech.testset record [--only ID]` | Record the fixed test set (12 scripts) | → `testset/<id>.wav`, `testset/testset.json` |
+| `uv run python -m speech.testset run [--set stt.provider=local ...]` | Replay the test set through the pipeline (no mic/speaker), score transcripts | → `runs/_testset/<time>/<id>/`, `runs/latency.jsonl` |
 
 `TURN` defaults to the most recent turn. Models, voice and provider: `config.toml`.
+Every turn also writes `timing.json` (events on one clock, 0 = you stopped talking) and a line in `runs/latency.jsonl`.
+Speech-to-text: Groq Whisper by default, local faster-whisper as automatic fallback (`[stt]` in `config.toml`).
+`testset/*.wav` is your voice and is gitignored (the repo is public); `testset/testset.json` holds the correct transcripts.
 
 ## Gotchas
 - Bluetooth headsets: using their mic switches them to call mode (HFP); AirPods were silent in it. Use the laptop mic.

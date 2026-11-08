@@ -19,12 +19,15 @@ of this session every time.
 import argparse
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 from openai import OpenAI
 
 from speech.config import latest_turn, load_config
+
+SENTENCE_END = re.compile(r"[.!?](\s|$)")
 
 
 class ChatModel:
@@ -49,7 +52,7 @@ class ChatModel:
             extra["reasoning_effort"] = self.cfg["reasoning_effort"]
 
         start = time.monotonic()
-        first_token_seconds = None
+        first_token_seconds = first_sentence_seconds = None
         pieces, usage = [], None
         stream = self.client.chat.completions.create(
             model=self.cfg["model"], messages=messages, stream=True,
@@ -62,12 +65,16 @@ class ChatModel:
                 if first_token_seconds is None:
                     first_token_seconds = time.monotonic() - start
                 pieces.append(piece)
+                if first_sentence_seconds is None and SENTENCE_END.search("".join(pieces)):
+                    first_sentence_seconds = time.monotonic() - start
                 if on_text:
                     on_text(piece)
 
         return {
             "text": "".join(pieces).strip(),
             "first_token_seconds": round(first_token_seconds or 0.0, 3),
+            # when the first full sentence had arrived (streamed speech could start then)
+            "first_sentence_seconds": round(first_sentence_seconds or time.monotonic() - start, 3),
             "total_seconds": round(time.monotonic() - start, 3),
             "usage": usage,  # tokens = word pieces; providers limit and bill by tokens
             "provider": self.cfg["provider"],

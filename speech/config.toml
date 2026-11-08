@@ -6,6 +6,17 @@ output_device = "pipewire"
 sample_rate = 16000          # Whisper wants 16 kHz mono
 
 [stt]
+provider = "groq"            # "groq" (cloud, ~0.3 s) or "local" (this laptop, ~1.6 s on CPU)
+fallback = "local"           # used when the provider fails (no internet, rate limit); "" = none
+# Hint words: Whisper spells these right more often when it sees them first (max ~200 words).
+prompt = "Booster K1 robot, Booster Lab, SIGRobotics club, mjlab."
+
+[stt.groq]
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "whisper-large-v3-turbo"  # test set 2026-11-08: 3.8% word errors vs 9.1% for whisper-large-v3, same speed
+
+[stt.local]
 model = "small.en"           # try "large-v3-turbo" once the GPU is back
 device = "cpu"               # "cuda" when nvidia-smi works
 compute_type = "int8"        # "float16" on GPU
@@ -24,3 +35,4 @@ engine = "kokoro"
 voice = "bm_daniel"          # British male; picked 2026-11-08 from `uv run python -m speech.voices`
 sample_rate = 24000          # Kokoro's output rate
 device = "cpu"               # "cuda" when the GPU is back
+cpu_threads = 4              # fastest on this laptop's CPU (notes/speech_bench.md); default was 14

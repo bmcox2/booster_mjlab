@@ -1,0 +1,74 @@
+{
+  "short_name": {
+    "kind": "short question",
+    "how": "normal voice",
+    "reference": "What's your name?",
+    "seconds": 3.35
+  },
+  "short_yes": {
+    "kind": "one-word answer",
+    "how": "just say it",
+    "reference": "Yeah.",
+    "seconds": 2.63
+  },
+  "short_wave": {
+    "kind": "short request",
+    "how": "normal voice",
+    "reference": "Can you wave at me?",
+    "seconds": 2.63
+  },
+  "names": {
+    "kind": "project words",
+    "how": "normal voice",
+    "reference": "I'm in the SIGRobotics club and we work on the Booster K1 in the Booster Lab.",
+    "seconds": 5.24
+  },
+  "fillers": {
+    "kind": "filler words",
+    "how": "say the ums and uhs naturally",
+    "reference": "Um, so, like, what do you, uh, think about people?",
+    "seconds": 5.64
+  },
+  "pause_short": {
+    "kind": "mid-sentence pause",
+    "how": "pause about 1 second at the ...",
+    "reference": "I want to know how you decide what to say.",
+    "seconds": 4.6
+  },
+  "pause_long": {
+    "kind": "long mid-sentence pause",
+    "how": "pause about 2 seconds at the ...",
+    "reference": "Okay so the plan is we finish the speech loop first and then add the gestures.",
+    "seconds": 7.66
+  },
+  "explain": {
+    "kind": "question needing a real answer",
+    "how": "normal voice",
+    "reference": "Explain what reinforcement learning is in one sentence.",
+    "seconds": 3.68
+  },
+  "joke": {
+    "kind": "open request",
+    "how": "normal voice",
+    "reference": "Tell me a joke about robots.",
+    "seconds": 2.8
+  },
+  "point": {
+    "kind": "body request (tool calls later)",
+    "how": "normal voice",
+    "reference": "Can you look to your left and then point at the table?",
+    "seconds": 3.69
+  },
+  "ramble": {
+    "kind": "long ramble (~15 s)",
+    "how": "relaxed, like talking to a friend",
+    "reference": "So today I was thinking about what we should show at the demo. Maybe the robot could introduce itself, talk a little about how it learned to move from motion capture data, and then wave at the audience before answering a few questions from the crowd.",
+    "seconds": 13.95
+  },
+  "far": {
+    "kind": "quiet / far away",
+    "how": "stand about 1 meter from the laptop",
+    "reference": "How's the weather looking today?",
+    "seconds": 3.74
+  }
+}

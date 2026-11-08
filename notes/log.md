@@ -1007,6 +1007,26 @@ Analysis only, no code changed, nothing trained. Full findings: **`notes/deploy_
 - Whisper mishears project words ("Booster Lab" → "Ibusa Lab")
 - dGPU still missing after two reboots (`lspci` shows no NVIDIA), so everything runs on CPU
 
+## 2026-11-08: speech step 2 (instrumentation, test set, latency budget)
+
+**Built** (`speech/`)
+- STT providers: Groq Whisper (default, now `whisper-large-v3-turbo`) with automatic fallback to local `small.en` (tested with a bad key); hint words `prompt` (Booster K1, Booster Lab, SIGRobotics, mjlab)
+- Kokoro `cpu_threads = 4`
+- `timing.py`: events on one monotonic clock (0 = speech end) → `timing.json` per turn + `runs/latency.jsonl`; `speech.latency` = median / p90 / max per stage, grouped by setup label
+- `speech.testset record|run`: 12 scripted recordings (WAVs gitignored, repo is public; references in `testset/testset.json`), replayed with `--set key=value` overrides; scores word error rate (`metrics.py`, fillers dropped, digits = number words)
+- `loop.py` refactored into `Pipeline.run_turn` (shared by the live loop and the test set); LLM stage reports first-sentence time
+
+**Results** (tables in `notes/speech_bench.md`)
+- Current setup on the test set: STT 0.35 s, LLM 0.29 s, **TTS 2.95 s median / 4.83 s p90**, reply ready 3.58 / 5.54 s. TTS = 82% of the wait
+- STT: Groq turbo 0.33 s, 3.8% word errors; large-v3 0.35 s, 10.1%; local small.en 1.60 s, 8.1%
+- Streaming estimate (first chunk): 1.62 s median / 2.01 s p90. Kokoro on CPU needs ≥ 0.72 s for even "Sure thing." → < 1 s needs GPU Kokoro or a cloud TTS
+- Latency budget written (end of turn 0.25, STT 0.30, LLM 0.25, TTS 0.15, hand-off 0.05)
+
+**Problems & fixes**
+- A bad edit (empty-string replace) blew `config.toml` up to 18,906 lines; rebuilt from git with exact-match edits
+- Setup label didn't include the hint prompt, so a no-hints run got grouped with the hints run; label now ends in `+hints`
+- Test-set references probably wrong for `pause_short` and `point` (all 4 STT runs agree on different words); listen and fix
+
 ## Next
 Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): normal + `--push` eval on the ranked clips (club GPU; command in the 2026-11-08 session) → bring-up: dry run + `check_dry_run.py` first, then gantry hold → clip → floor → demo with audio. Speech loop work continues in parallel. Tracker exit criteria (`roadmap.md` table) in parallel.
 
@@ -1022,13 +1042,12 @@ Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`):
 - Milestone checks with `1de2pner`: no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio
 - Final run (after hands-on K1 + ankle model): A+B data **`beat2-full-torso-train-ab:v0`** (`--registry-name`; replaces the hand-combined `logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
 
-**2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Step 1 done 2026-11-08. Step 2 (instrumentation):
-- STT provider switch in `speech/stt.py` + config: Groq `whisper-large-v3` default, local `small.en` fallback; Whisper prompt/hotwords for Booster, K1, SIGRobotics
-- `torch.set_num_threads(4)` for Kokoro
-- Event timestamps on one monotonic clock → `timing.json` per turn + `latency.jsonl`; summary script (median / p90 per stage)
-- Fixed test set: ~10 recorded utterances (short, long, mid-sentence pauses) with hand-written transcripts, replayed from WAV; extend `speech/bench/` to it
-- Optional: accept Orpheus terms in the Groq console, then benchmark it against Kokoro (first audio, quality)
-- Later: personality / system prompt (the bot is bland and "how can I help"-y); compare gpt-oss-120b / qwen3.8-27b on it
+**2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Steps 1–2 done 2026-11-08 (budget in `speech_bench.md`: TTS first audio is the problem). Next:
+- Listen to `testset/pause_short.wav` and `point.wav` (`uv run python -m speech.audio --play testset/<id>.wav`), fix their references
+- Optional once: check logged times against a phone recording of you + the laptop (plan step 2.5)
+- TTS first audio ≤ ~0.15 s: accept Orpheus terms in the Groq console and benchmark it; Kokoro on GPU when the dGPU is back; maybe Cartesia / ElevenLabs Flash
+- System prompt: open with a short phrase; personality later (bot is bland)
+- Step 3: Silero VAD + Smart Turn (end-of-turn), then step 4 streaming (first chunk)
 
 **3. Hardware / people**
 - Hands-on K1: compute variant, SDK joint control, custom policy vs Booster's controller; confirm mic array, speaker, battery, Doubao integration
