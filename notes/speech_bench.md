@@ -156,3 +156,29 @@ audio has to drop ~5×. Options to measure: (1) Kokoro on the GPU once it is bac
 ~0.05–0.1 s); (2) Groq Orpheus (`canopylabs/orpheus-v1-english`, same key, needs terms accepted);
 (3) Cartesia / ElevenLabs Flash / Deepgram Aura free tiers (network ~0.1 s + model). Also: tell the
 LLM to open with a short phrase, which shortens the first chunk for free.
+
+## 2026-11-08: Groq Orpheus TTS (`canopylabs/orpheus-v1-english`, terms accepted)
+
+Voices: autumn, diana, hannah (female), **austin, daniel, troy** (male). 24 kHz WAV, sent in
+chunks as it is generated (`transfer-encoding: chunked`), so playback can start on the first bytes.
+
+Same 12 replies as the Kokoro streaming estimate, voice `daniel`, first chunk then full reply:
+
+| | First audio bytes | Whole request |
+|---|---|---|
+| "Sure thing." | 0.23 s | 0.34 s (1.2 s of audio) |
+| First chunks, 5 unthrottled items | **0.15–0.20 s** | 0.26–0.62 s |
+| Full replies, 5 unthrottled items | 0.16–0.20 s | 1.0–2.3 s for 6–14 s of audio (~0.16 s per audio second) |
+| Every request after the ~10th | ~6.2–6.5 s | ~6.3–7.9 s |
+
+- **Unthrottled, Orpheus fits the budget**: first audio ~0.2 s vs Kokoro-CPU 0.72–1.4 s. With it:
+  STT 0.33 + LLM first sentence 0.25 + TTS first bytes 0.2 + hand-off 0.05 ≈ **0.85 s**, plus
+  end of turn ≈ 1.1 s. Kokoro-CPU: ~1.6 s + end of turn.
+- **Free tier limits (headers): 100 requests/day, 1,200 tokens/minute.** The ~6.3 s plateau
+  started when the benchmark hit the per-minute limit (the SDK waited and retried). For a
+  conversation, 100 requests/day ≈ 30–50 turns with sentence-chunked TTS: enough for tests and a
+  short demo, not for daily use. A paid Groq tier or Kokoro-on-GPU (free) for everyday use.
+- In the client: `max_retries=0` and fall back to Kokoro on a 429 (rate limit), so the robot
+  never goes silent for 6 s.
+- Quality: samples in `speech/runs/_voices/orpheus_{daniel,austin,troy}.wav` vs Kokoro
+  `bm_daniel.wav` (same sentence). Orpheus also takes emotion tags (e.g. `<laugh>`), not tried.
