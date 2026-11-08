@@ -1,0 +1,26 @@
+# Which provider/model each stage uses. Switching the LLM = change [llm] here.
+
+[audio]
+input_device = "pipewire"    # PortAudio only sees ALSA names; choose the headset in GNOME Sound settings
+output_device = "pipewire"
+sample_rate = 16000          # Whisper wants 16 kHz mono
+
+[stt]
+model = "small.en"           # try "large-v3-turbo" once the GPU is back
+device = "cpu"               # "cuda" when nvidia-smi works
+compute_type = "int8"        # "float16" on GPU
+
+[llm]
+provider = "groq"
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "openai/gpt-oss-20b"   # also: openai/gpt-oss-120b, qwen/qwen3.8-27b (Groq list, 2026-11-08)
+reasoning_effort = "low"     # gpt-oss thinks before answering; low keeps first token ~0.25 s
+system_prompt = """You are a friendly robot talking out loud. Reply in plain spoken English, \
+1 to 3 short sentences. No markdown, lists, emojis, or symbols that can't be spoken."""
+
+[tts]
+engine = "kokoro"
+voice = "bm_daniel"          # British male; picked 2026-11-08 from `uv run python -m speech.voices`
+sample_rate = 24000          # Kokoro's output rate
+device = "cpu"               # "cuda" when the GPU is back

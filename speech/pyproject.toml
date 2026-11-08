@@ -1,0 +1,27 @@
+[project]
+name = "speech"
+version = "0.1.0"
+description = "K1 speech loop: mic -> STT -> LLM -> TTS -> speaker (notes/speech_plan.md)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy",
+    "sounddevice",
+    "soundfile",
+    "faster-whisper",
+    "av<16",  # faster-whisper 1.2.1 passes metadata_errors, which av 19 rejects
+    "openai",
+    "kokoro",
+    # English word-analysis model Kokoro needs; listed here so uv keeps it (else Kokoro re-downloads it every run)
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "python-dotenv",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/speech"]
+
+[tool.hatch.metadata]
+allow-direct-references = true  # for the en-core-web-sm URL above
