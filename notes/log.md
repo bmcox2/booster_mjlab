@@ -1027,8 +1027,38 @@ Analysis only, no code changed, nothing trained. Full findings: **`notes/deploy_
 - Setup label didn't include the hint prompt, so a no-hints run got grouped with the hints run; label now ends in `+hints`
 - Test-set references probably wrong for `pause_short` and `point` (all 4 STT runs agree on different words); listen and fix
 
+## 2026-11-10: plan review against the field (2025–2026) + new next steps
+
+Analysis only: no code changed, nothing trained. Reviewed the repo notes and recent papers, then re-ordered the plan (`roadmap.md` updated, reading list in `papers.md`). Some papers' middle sections were read through summaries: check the PDF before relying on a number.
+
+**What the field does**
+- **RoboGesture** (arXiv 2608.28693, Aug 2026, G1): streaming flow-matching generator in 1 s chunks (~0.25 s per chunk), outputs **robot joints directly** (upper body + hands; human motion retargeted offline with GMR for training). Legs use Unitree's built-in standing controller. Its dominant delay is LLM + TTS + chunking, not motion. No code found
+- **PhysDrift** (2606.19935, G1): BEAT2 retargeted offline, generator outputs G1 joint space directly. No code found
+- **GenTrack** (2608.01410, sim only): generated motion differs from mocap mainly in jerk, foot skating, root height, foot clearance. Frozen SONIC completes 92.6% of generated references; fix trains the tracker on 50/50 mocap + generated references (and the generator against the tracker)
+- **EMAGE is offline only** (needs the whole utterance; marked non-streaming by both papers below). Streaming BEAT2 generators: LiveGesture (2604.10927; 200 ms chunks, zero look-ahead, first output 250 ms) and GestureFAR (2609.21576; ~4× real time on a MacBook Air). No code found for either
+- **What Matters in Humanoid General Motion Tracking?** (2607.19903; YAHMP, open source on mjlab, `github.com/hucebot/yahmp`; G1, zero-shot real): removing observation history raised base errors 38–50% and key-body ~10%; History-20 no better than History-10; residual actions ~5% better key-body; teacher-student only small gains
+- **SONIC / GR00T-WholeBodyControl**: weights, training code and deploy stack released, G1 only. Architecture: one tracker as the interface, planners and a VLA on top
+
+**Decisions**
+- Goal: a working system first (experience, resume); a paper is a bonus. Generator and TTS can run on the club GPU. Plan without hands
+- **Speech pauses after step 3 live test 2.** Step 4 (streaming) waits until the pieces are connected live; step 5 (barge-in) waits for the K1 mic check. The generator can use saved TTS WAVs from `speech/runs/`
+- **Main work: the gesture generator.** EMAGE offline smoke test first (milestone 2), then a **retrieval generator v0**: match TTS audio windows to BEAT2 K1 clips by rhythm/energy, crossfade (~0.3 s), idle stretches, fixed standing lower body. Uses only motion the tracker already passes
+- **History experiment** before the final run: No-State-Estimation task with the actor group's `history_length` = 10 (mjlab `ObservationGroupCfg`), same data, compare with `y1r48dhc` on `heldout-val`. If adopted, `deploy/build_observation` and the `booster_deploy` task must stack past frames
+- Runtime contract: a **50 Hz K1 reference stream** (joint pos/vel, trunk orientation; later a root velocity command). Keep GMR/`ground_clip` (whole-clip, offline) out of the runtime path
+
+**New risks recorded** (`roadmap.md`): continuous operation (minutes of idle → gesture → idle; drift ~5 cm per clip, heading checked over 8 s only), no listening behaviour, robot self-noise for barge-in, no observation history.
+
 ## Next
-Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): normal + `--push` eval on the ranked clips (club GPU; command in the 2026-11-08 session) → bring-up: dry run + `check_dry_run.py` first, then gantry hold → clip → floor → demo with audio. Speech loop work continues in parallel. Tracker exit criteria (`roadmap.md` table) in parallel.
+Current step: **gesture generator** (EMAGE smoke test → retrieval generator v0), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 3 live test 2.
+
+**0. This week**
+- Speech: step 3 live test 2 (20 turns with pauses), log, commit, then pause
+- Club GPU: history experiment (`history_length` 10 on the actor group, No-State-Estimation, `train-ab:v0`, 6k it, `tee` to `logs/train_history10.txt`); eval on `heldout-val:v0` vs `y1r48dhc`
+- EMAGE smoke test on ~5 TTS WAVs from `speech/runs/` → GMR → `ground_clip` → `eval-tracking` + `sim2sim --video`; list what breaks (jitter, foot sliding, joint limits, falls)
+- **Thursday robot session:** dry run + `check_dry_run.py`, gantry hold; ask/test whether the SDK can drive arms + head while Booster's controller holds the legs; record the K1 mics with motors running; time laptop ↔ robot round trip; note the compute module
+- After Thursday: retrieval generator v0. First download BEAT2 audio for the training takes (only 9 takes have audio). Done when a `speech.loop` reply plays as a dubbed `sim2sim` video with synced gestures, plus a 2-minute continuous run with no fall
+
+**Robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): normal + `--push` eval on the ranked clips (club GPU; command in the 2026-11-08 session) → bring-up: dry run + `check_dry_run.py` first, then gantry hold → clip → floor → demo with audio.
 
 **1. Tracker (criteria 1–7)**
 - Data: watch the 3 Solomon val clips that fail in every run (`solomon_0_13_13_t29-40_shift` 10.2 s, `solomon_0_16_16_t19-23_shift` 3.1 s, `solomon_0_12_12_t58-77_shift` ~13.5 s) and `lawrence_0_12_12_t26-38` in `visualize-motions`; drop or fix them in val. Bad clips found later go into `[qc] exclude_clips` in `tools/datasets/beat2_full.toml`, then rerun `beat2_batch.py` (cached up to QC, ~50 min with uploads)
@@ -1042,7 +1072,7 @@ Current step: **robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`):
 - Milestone checks with `1de2pner`: no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio
 - Final run (after hands-on K1 + ankle model): A+B data **`beat2-full-torso-train-ab:v0`** (`--registry-name`; replaces the hand-combined `logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
 
-**2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Steps 1–2 done 2026-11-08 (budget in `speech_bench.md`: TTS first audio is the problem). Next:
+**2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Steps 1–2 done 2026-11-08 (budget in `speech_bench.md`: TTS first audio is the problem). **Paused after step 3 live test 2 (2026-11-10)**; the items below resume with step 4:
 - Listen to `testset/pause_short.wav` and `point.wav` (`uv run python -m speech.audio --play testset/<id>.wav`), fix their references
 - Optional once: check logged times against a phone recording of you + the laptop (plan step 2.5)
 - TTS first audio ≤ ~0.15 s: accept Orpheus terms in the Groq console and benchmark it; Kokoro on GPU when the dGPU is back; maybe Cartesia / ElevenLabs Flash

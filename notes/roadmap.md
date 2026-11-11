@@ -1,8 +1,13 @@
 # Roadmap: A Conversational, Gesturing K1
 
-Updated 2026-10-20, after the full-BEAT2 tracker. Replaces the 2026-10-16 version (in git),
-whose steps 0–1 (Slice 0, general tracker) are now mostly done. `proposal.md` is the approved
-plan; the speech/LLM layer below is its planned extension (tell the lead before changing it).
+Updated 2026-11-10, after a review against 2025–2026 work (`log.md` 2026-11-10, reading list in
+`papers.md`): steps re-ordered so the gesture generator comes before more speech work. Previous
+version 2026-10-20 (in git). `proposal.md` is the approved plan; the speech/LLM layer below is its
+planned extension (tell the lead before changing it).
+
+Priority: a **working system first** (experience, resume); a paper is a bonus. The likely paper
+angle is a K1-native streaming generator (outputs K1 joints directly, trained on the ~29 h of
+retargeted BEAT2 with audio). Plan without hands.
 
 ## Vision
 
@@ -34,13 +39,21 @@ camera ─► person location ───┼─► LLM (conversation + tool calls)
 | 1. Perception: mics → STT; camera → person location | not started | robot / laptop |
 | 2. LLM: conversation + skill tool calls | not started | off-robot (cloud API or club GPU over Wi-Fi) |
 | 3. TTS: streamed speech audio | not started | off-robot or robot |
-| 4. Gesture generator: audio + text → SMPL-X | not started (EMAGE candidate) | GPU |
-| 5. Retargeting: SMPL-X → K1 joints | **exists** (GMR + torso IK + `ground_clip`, offline) | must become streaming |
+| 4. Gesture generator: TTS audio (+ text) → K1 reference | not started. **v0: retrieval** from the K1 BEAT2 clip library; EMAGE only as an offline smoke test (it needs the whole utterance) | club GPU |
+| 5. Retargeting: SMPL-X → K1 joints | **exists** (GMR + torso IK + `ground_clip`, offline) | stays offline: builds the library / training data, not in the runtime path |
 | 6. Tracker policy | **trained in sim** (`1de2pner`) | onboard |
 | 7. Locomotion | Booster's controller via SDK | onboard |
 
 - Beat gestures come from the audio (generator); semantic gestures (point, wave) come from LLM
   tags or a named gesture library (the AMASS waves/points are kept for this).
+- **The stable contract is a 50 Hz K1 reference stream** (22 joint positions + velocities, trunk
+  orientation; later a root velocity command for walking). Anything may produce it: retrieval, a
+  neural generator, the semantic gesture library, a locomotion planner. Version the policy's
+  observation layout (hands will change it). SONIC (arXiv 2511.07820) is built this way.
+- **Stationary lower body:** the generator supplies arms, head and trunk tilt; the legs follow a
+  fixed standing reference. This removes most of what breaks with generated motion (foot
+  skating, root height, foot clearance; GenTrack, arXiv 2608.01410). RoboGesture (2608.28693)
+  goes further and leaves the legs to the robot's own standing controller.
 
 ## Where things stand (2026-10-20)
 
@@ -65,31 +78,52 @@ Real "done" only after hardware deployment.
 | 4 | Handles imperfect / generated motion (gate before connecting the generator) | Not started. EMAGE output → GMR → `eval-tracking`; expect jitter, foot sliding, impossible poses |
 | 5 | Clean transitions: start, idle hold, clip-to-clip blending, return to idle | Not started; **probably the biggest tracker item left**. In training a finished clip teleports the robot to a new start, so it has never practiced idle → gesture → idle. Likely needs stitched clips with idle stretches |
 | 6 | Smooth output, no jitter | Not measured. Add an action-rate / jerk metric to `eval-tracking` |
-| 7 | Checkpoint frozen, config reproducible, eval numbers logged | Winner picked; final run pending (after the hardware questions below) |
+| 7 | Checkpoint frozen, config reproducible, eval numbers logged | Deployment candidate `y1r48dhc` (No-State-Estimation); final run pending (after rows 8–9 and the hardware questions) |
+| 8 | Observation history (added 2026-11-10) | Experiment: actor `history_length` 10 vs `y1r48dhc` on `heldout-val`. A mjlab-based study (arXiv 2607.19903) found no history raised base errors 38–50%. Adopt if it wins; then `deploy/` must stack frames |
+| 9 | Continuous operation (added 2026-11-10) | 10-minute reference (idle → gestures → idle, generated or stitched) in sim: no fall, drift and heading error under a set limit. Today's evidence is 4–20 s clips (drift ~5 cm per clip) |
 
-## Steps
+## Steps (re-ordered 2026-11-10)
 
 | # | Step | Done when |
 |---|---|---|
-| 1 | **Finish the tracker exit criteria** ← *current* (in parallel with 2) | All 7 rows above met in sim |
-| 2 | **Speech loop on the laptop, no robot:** STT → LLM → TTS (plan: `speech_plan.md`) | End-to-end latency measured, target < ~1 s |
-| 3 | **Gesture generator in sim:** TTS audio → generator → retarget → tracker | Any spoken reply → K1 gesturing in sim, in sync with the audio |
-| 4 | **Hardware:** tracker with canned clips, then the live pipeline | Stationary conversational K1 on the real robot |
-| 5 | **LLM tool calls:** look_at, wave, point, walk_to | The LLM triggers skills during a conversation |
-| 6 | **Mobility + gesture, presenting** | Walks and gestures; gives a short talk |
+| 1 | **Hardware, canned clips** (first session Thu 2026-11-12) | Dry run passes `check_dry_run.py`; one clip on the gantry, then the floor, `/low_state` + `/joint_ctrl` recorded. Also answer: SDK arms + head while Booster's controller holds the legs? K1 mics with motors running; laptop ↔ robot round trip; compute module |
+| 2 | **Generated-motion smoke test** (~1 day) | EMAGE offline on ~5 TTS replies → GMR → `ground_clip` → `eval-tracking` + `sim2sim`; failure causes listed |
+| 3 | **Retrieval generator v0 in sim** ← *main work now* | TTS WAV → 50 Hz K1 reference (matched BEAT2 clips, crossfades, idle, fixed legs); a `speech.loop` reply plays as a dubbed `sim2sim` video, synced within ~100 ms on stressed words; 2-minute continuous run, no fall |
+| 4 | **Final tracker run** (after 1–3) | Exit criteria rows 1–9 met in sim: history if it wins, idle + stitched clips in training, fixed lower-body option |
+| 5 | **Speech loop streaming** (`speech_plan.md` step 4; steps 1–3 done) | First audio < 1 s median on the test set |
+| 6 | **Live conversation on the robot** | 5-minute conversation, no fall, no manual restarts |
+| 7 | **LLM tool calls:** look_at, wave, point (barge-in once the K1 audio allows it) | The LLM triggers a wave or point at the right word |
+| 8 | **Neural generator** (only if retrieval looks repetitive; paper angle), then **mobility + presenting** | Beats retrieval in a blind viewer comparison; walks and gestures |
 
-## Key risks
+Deferred: more Tier B / data cleanup beyond known bad clips, a speech framework switch (Pipecat /
+LiveKit), barge-in before the K1 mic check.
 
-- **Sim-to-real gap for the tracker.** Where most humanoid projects stall; expect it to take
-  longer than everything so far.
-- **Latency and sync.** EMAGE generates a whole utterance offline; the < 1 s target needs a
-  generator that works in chunks (streaming), or LLM-tagged gestures that start right away
-  while beat gestures follow. Gesture motion must stay in sync with TTS playback.
-- **Streaming retargeting.** GMR + `ground_clip` run offline on whole clips today.
-- **Walking + gesturing at once** is its own research problem (ExBody2).
+## Key risks (ranked 2026-11-10)
+
+1. **No hardware contact yet.** Ankle gains, latency and the final run all depend on it.
+   Sim-to-real is where most humanoid projects stall.
+2. **No live generator.** EMAGE needs the whole utterance. Streaming BEAT2 models exist
+   (LiveGesture 2604.10927, GestureFAR 2609.21576, RoboGesture 2608.28693) but no code was found
+   for any. Retrieval v0 avoids the dependency and becomes the baseline.
+3. **Continuous operation untested** (exit criterion 9): minutes of idle → gesture → idle, drift,
+   heading. No listening behaviour (gaze, nods); BEAT2 is mostly talking.
+4. **No observation history** in the policy (exit criterion 8).
+5. **Latency is mostly speech** (TTS 82% of the wait; RoboGesture reports the same). Cover it
+   with the body: an immediate head turn or posture shift when the user stops talking.
+6. **Robot audio:** the K1 hears its own voice and motors; barge-in may fail there.
+7. **Foot shifts:** not needed with a fixed lower-body reference; keep Tier B in training for
+   robustness, stop investing in it.
+8. **No wrists or hands:** palm orientation and hand shape are lost. Judge gestures by watching
+   them (viewer ratings later); hand error in cm doesn't measure "natural".
+- Later: **walking + gesturing at once** is its own research problem (ExBody2); routes are
+  Booster's walk controller with arms overridden, a tracker with a velocity command, or a
+  whole-body tracker fed by a planner. Not settled in the field.
 
 ## Open questions / to-dos
 
+- **Can Booster's SDK command arms + head while its own standing/walking controller runs the
+  legs?** If yes, that's a much simpler v1 fallback and the likely first mobility route.
+- Network delay from the club GPU (generator, TTS) to the robot.
 - **Hands-on time with the K1, before the final tracker run:** which compute variant the club
   has (QCS8550 / Orin NX 8 GB / AGX Orin 32 GB), SDK joint control, how a custom policy
   coexists with Booster's controller. These decide criteria 2, 3 and 7.

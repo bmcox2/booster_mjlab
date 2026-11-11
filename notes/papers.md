@@ -49,6 +49,16 @@ Full pipeline on the Unitree G1 (29 DoF): speech → gesture motion → retarget
 - **ExBody2:** expressive upper body while walking (milestone: gesturing while walking).
 - **GMR, AMASS, HumanML3D, SeG, BEAT2:** data and retargeting (see proposal).
 
+## Reading list (2026-11-10 plan review)
+Some numbers in `log.md` 2026-11-10 came from summaries of these papers; check the PDF.
+1. **RoboGesture** (arXiv 2608.28693): closest full system to this project (G1), streaming generator that outputs robot joints directly, legs on the built-in standing controller.
+2. **GenTrack** (2608.01410): what breaks when a mocap-trained tracker gets generated motion (jerk, foot skating, root height, foot clearance), and training on a mocap + generated mix.
+3. **What Matters in Humanoid General Motion Tracking?** (2607.19903): ablations on mjlab (YAHMP, open source); observation history matters most. Guides the final tracker run.
+4. **SONIC** (2511.07820): one tracker as the universal interface, planners / VLA on top; the long-term architecture.
+5. **LiveGesture** (2604.10927): zero-look-ahead streaming generator on BEAT2; what a neural generator v1 would look like.
+6. **PhysDrift** (2606.19935): BEAT2 → robot joint space generation; close to a K1-native generator (possible paper angle).
+7. **ExBody2** (2412.13196): gesturing while walking.
+
 ## Next reading (2026-10-20 direction)
 - **SayCan** (Ahn et al., 2022) and **Code as Policies** (Liang et al., 2022): LLM → robot skills, the pattern for the tool-call layer.
 - **EMAGE** (Liu et al., CVPR 2024): BEAT2's audio → full-body gesture model; candidate gesture generator. Check whether it can run in chunks.
