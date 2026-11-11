@@ -301,3 +301,34 @@ after speech end (push-to-talk timing; hands-free adds ~0.32 s endpoint); one me
 
 Expected live hands-free response: ~0.32 + 0.3 + 0.25 + 0.8–1.1 ≈ **1.7–2.0 s** (was 3.71 s median).
 Under 1 s still needs a faster first piece: GPU Kokoro or cloud TTS (`speech_plan.md` budget).
+
+## 2026-11-11: Step 4 live test 1 (hands-free + streaming, 14 turns) and fixes
+
+Live (`--last 10`): endpoint 0.30 s, STT 0.33, LLM first piece 0.30, voicing first piece 0.71 /
+1.17 s, **response 1.79 s median / 2.24 p90** (was 3.71 / 8.50 before streaming). Measured gaps: 0.
+(`handoff` is negative in streaming: playback starts before the whole reply is voiced.)
+
+Two complaints, both confirmed in the data:
+1. **Unnatural ~1 s pauses between sentences.** Not gaps: Kokoro pads each piece with ~0.25 s of
+   silence before and ~0.45 s after the voice (29 pieces, medians), so every piece boundary had a
+   **0.70 s** pause. Fix: trim the padding (`trim_silence`, 10 ms RMS > 0.01, keep 20 ms / 40 ms)
+   and append a natural pause at the *end* of each piece (300 ms after `. ! ?`, 150 ms after
+   `, ; :`), where it plays while the next piece is voiced. Replaying the 14 replies: audio 1.0 s
+   shorter per reply, first piece voiced in 0.65 s, gaps 1 / 14 (0.14 s). (Pause at the *start* of the
+   next piece instead: gaps 2 / 14 up to 0.46 s.)
+2. **Cut off 5 times in 14 turns** at pauses ("...talking about" 0.81, "...gave up and..." 0.84,
+   "...more so..." 0.93, "...shortcut their..." 0.82; real endings 0.93–0.99). Fix: a **strict
+   threshold 0.95 for the first 800 ms of a pause**, then 0.8 (`smart_turn_strict_*`). Replaying the
+   30 live turns of both sessions with 2.5 s of silence appended:
+
+| Rule | 6 cut-off turns: wait before ending (s) | 24 finished turns: median / p90 / > 1 s |
+|---|---|---|
+| 0.8 from 200 ms (old) | 0.22 0.51 1.12 0.22 1.12 0.51 | 0.22 / 2.02 / 4 |
+| strict 0.95 until 500 ms | 1.41 0.51 1.12 1.12 1.12 0.51 | 0.22 / 2.02 / 4 |
+| **strict 0.95 until 800 ms (new)** | **1.41 1.73 1.12 1.12 1.12 1.73** | **0.22 / 2.02 / 5** |
+| strict 0.97 until 800 ms | same | 0.80 / 2.02 / 5 |
+| 0.9 from 200 ms | 0.22 2.02 1.12 0.22 1.41 0.51 | 0.22 / 2.02 / 5 |
+
+   Test set with the new rule: 0 / 12 cut, median 224 ms, but "What's your name?" and "Yeah." now
+   wait 0.8 s and `fillers` hits the 2 s fallback. A pause longer than ~1.1 s after a complete
+   sentence still ends the turn: that ambiguity needs barge-in (step 5), so you can just keep talking.

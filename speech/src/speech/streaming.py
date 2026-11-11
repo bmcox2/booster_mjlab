@@ -137,6 +137,34 @@ class Player:
         self.stream.close()
 
 
+def trim_silence(audio: np.ndarray, sample_rate: int, threshold: float = 0.01,
+                 keep_before: float = 0.02, keep_after: float = 0.04) -> tuple[np.ndarray, float]:
+    """Kokoro pads every piece with ~0.25 s of silence before and ~0.45 s after the voice, so two
+    pieces back to back had a 0.7 s pause. Cut that padding (we add natural pauses ourselves).
+    Returns (trimmed audio, seconds removed from the start)."""
+    frame = int(0.01 * sample_rate)  # 10 ms
+    n = len(audio) // frame
+    if n == 0:
+        return audio, 0.0
+    loudness = np.sqrt(np.mean(audio[:n * frame].reshape(n, frame) ** 2, axis=1))
+    voiced = np.nonzero(loudness > threshold)[0]
+    if len(voiced) == 0:
+        return audio, 0.0
+    start = max(0, voiced[0] * frame - int(keep_before * sample_rate))
+    end = min(len(audio), (voiced[-1] + 1) * frame + int(keep_after * sample_rate))
+    return audio[start:end], start / sample_rate
+
+
+def pause_after(text: str, cfg: dict) -> float:
+    """How long to pause after a piece, from how it ends (like a person breathing)."""
+    end = text.rstrip()[-1:]
+    if end in ".!?":
+        return cfg.get("sentence_pause_ms", 300) / 1000
+    if end in ",;:":
+        return cfg.get("clause_pause_ms", 150) / 1000
+    return 0.05
+
+
 def simulate_playback(ready: list[float], durations: list[float]) -> tuple[list[float], float]:
     """Without a speaker (test-set replay): when would each chunk start, and how much silence
     would there be between chunks? ready = time each chunk's audio was ready."""
@@ -167,6 +195,16 @@ def stream_reply(llm, tts, messages: list[dict], timer, chunk_cfg: dict, player:
             while (item := chunk_queue.get()) is not None:
                 index, text = item
                 audio, info = tts.synthesize(text)
+                audio, trimmed = trim_silence(audio, sample_rate)
+                # The natural pause goes at the END of this piece: it plays while the next piece
+                # is still being voiced, which hides that wait (at the start of the next piece it
+                # would only play after the wait, making the pause longer).
+                pause = pause_after(text, chunk_cfg)
+                audio = np.concatenate([audio, np.zeros(int(pause * sample_rate), np.float32)])
+                info = {**info, "words": [{**w, "start": round(max(0.0, w["start"] - trimmed), 3),
+                                           "end": round(max(0.0, w["end"] - trimmed), 3)}
+                                          for w in info["words"]],
+                        "trimmed_s": round(trimmed, 3), "pause_s": pause}
                 ready = time.monotonic()
                 if index == 0:
                     timer.mark("tts_first_audio", ready)

@@ -120,6 +120,10 @@ class Endpointer:
         self.turn_detector = turn_detector
         self.check_s = cfg.get("smart_turn_check_ms", 200) / 1000
         self.turn_threshold = cfg.get("smart_turn_threshold", 0.5)
+        # Short pauses need a more confident "finished" (people pause between sentences and on
+        # "and...", "about..."); after strict_ms of silence the normal threshold applies.
+        self.strict_threshold = cfg.get("smart_turn_strict_threshold", self.turn_threshold)
+        self.strict_s = cfg.get("smart_turn_strict_ms", 0) / 1000
         self.max_silence_s = cfg.get("smart_turn_max_silence_ms", 2000) / 1000
         self.recheck_s = cfg.get("smart_turn_recheck_ms", 300) / 1000
         self.threshold = cfg["threshold"]
@@ -173,7 +177,8 @@ class Endpointer:
                 self.next_check += self.recheck_s
                 p = self.turn_detector.prob(np.concatenate(self.frames))
                 self.turn_checks.append([round(silence, 3), round(p, 3)])
-                if p >= self.turn_threshold:
+                needed = self.strict_threshold if silence < self.strict_s else self.turn_threshold
+                if p >= needed:
                     reason = "smart turn"
             if reason is None and silence >= self.max_silence_s:
                 reason = "silence timeout"
