@@ -239,3 +239,31 @@ Test-set replay (12 one-sentence recordings, `speech.vad --testset`):
   others end at 224 ms; the long question ends at 1.7 s on a later re-check.
 - Not yet verified live: exit criteria (20 turns with deliberate pauses: ≤ 1 cut; median delay
   < 400 ms). Expected response with Smart Turn: ~2.27 − 0.64 + 0.22 ≈ 1.85 s median.
+
+## 2026-11-10: Step 3 live test 2 (hands-free, Smart Turn, 16 turns)
+
+| Stage | Median | p90 | Max |
+|---|---|---|---|
+| endpoint (your last sound → turn over) | **0.32 s** | 2.11 s | 2.13 s |
+| STT (Groq turbo) | 0.33 | 0.45 | 0.47 |
+| LLM whole reply (gpt-oss-20b) | 0.36 | 0.42 | 0.44 |
+| TTS whole reply (Kokoro, CPU) | 2.30 | 7.36 | 11.87 |
+| **response** (last sound → audio starts) | **3.71 s** | 8.50 s | 12.82 s |
+
+- **Step 3 exit criteria:** cut-offs **1 / 16** (a lone "Well," scored 0.91 = "finished"); target ≤ 1 / 20,
+  met within the sample size. Endpoint median **0.32 s** (< 0.4 s target, met). Noise: 0 false turns
+  in 1 min (test 1, met). **Step 3 done.**
+- Endpoint delays: 12 turns ended at 0.29–0.36 s (Smart Turn), 2 at 0.68–0.89 s (re-check), 2 at
+  ~2.1 s (Smart Turn kept saying "not finished": "...we gotta chat and see what happens.", and a
+  long excited turn). Turns with "um" mid-sentence waited through it as designed (e.g. 0.008, 0.007,
+  0.015 at pauses, then 0.962 at the end).
+- **Long waits were TTS on long replies**, not endpointing: gpt-oss-20b replies of 40–49 words
+  (12–14 s of speech) took 5.6–11.9 s to voice whole. Turn 4 ran at 0.9 s per audio second (normal 0.4):
+  CPU contention from other work on the laptop at the time.
+- STT misheard "Groq" as "Rock" → added to the hint words.
+- Reply length, replaying the 16 turns' requests with a stricter prompt (≤ 2 sentences, < 30 words,
+  start short, no dashes): gpt-oss-20b 19 → 16.5 words median (max 49 → 44, ignores it);
+  gpt-oss-120b 13 / 35; **qwen3.8-27b 12.5 / 20** (first sentence 0.24 s median, one 6.8 s outlier).
+  → **LLM default switched to qwen3.8-27b** + the stricter prompt. Watch the outlier.
+- Remaining latency is step 4 (stream TTS from the first chunk) and a faster TTS (GPU / cloud).
+  Speech paused here (roadmap 2026-11-10); resume at step 4.

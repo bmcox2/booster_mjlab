@@ -97,6 +97,8 @@ all your keys).
 
 ## Step 3. Voice activity detection and turn-taking (2 sessions)
 
+**Done 2026-11-10** (`speech.vad`, `speech.loop --hands-free`): Silero VAD + Smart Turn v3.2 (200 ms check, threshold 0.8, re-check 300 ms, 2 s fallback). Live: 1/16 cut-offs, endpoint 0.32 s median, 0 false turns. Numbers in `speech_bench.md`. Steps 1–2 done 2026-11-08. **Paused here; resume at step 4.**
+
 **Why now:** replaces push-to-talk, and the wait for "has the user finished?" is often the
 largest hidden latency. Streaming (step 4) starts from the end of the turn, so this comes first.
 

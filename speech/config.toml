@@ -24,7 +24,7 @@ echo_tail_ms = 300           # after the robot speaks, ignore the mic this long 
 provider = "groq"            # "groq" (cloud, ~0.3 s) or "local" (this laptop, ~1.6 s on CPU)
 fallback = "local"           # used when the provider fails (no internet, rate limit); "" = none
 # Hint words: Whisper spells these right more often when it sees them first (max ~200 words).
-prompt = "Booster K1 robot, Booster Lab, SIGRobotics club, mjlab."
+prompt = "Booster K1 robot, Booster Lab, SIGRobotics club, mjlab, Groq."
 
 [stt.groq]
 base_url = "https://api.groq.com/openai/v1"
@@ -40,10 +40,12 @@ compute_type = "int8"        # "float16" on GPU
 provider = "groq"
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
-model = "openai/gpt-oss-20b"   # also: openai/gpt-oss-120b, qwen/qwen3.8-27b (Groq list, 2026-11-08)
-reasoning_effort = "low"     # gpt-oss thinks before answering; low keeps first token ~0.25 s
+model = "qwen/qwen3.8-27b"    # 2026-11-10: keeps to the length limit (12.5 words median, max 20 on live test 2);
+                             # gpt-oss-20b ignored it (16.5 / 44). Also: openai/gpt-oss-20b, openai/gpt-oss-120b
+# reasoning_effort = "low"   # only for the gpt-oss models (they think before answering)
 system_prompt = """You are a friendly robot talking out loud. Reply in plain spoken English, \
-1 to 3 short sentences. No markdown, lists, emojis, or symbols that can't be spoken."""
+at most 2 short sentences and under 30 words, like a person chatting. Start with a few short words. \
+No markdown, lists, dashes, emojis, or symbols that can't be spoken."""
 
 [tts]
 engine = "kokoro"
