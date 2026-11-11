@@ -1048,15 +1048,31 @@ Analysis only: no code changed, nothing trained. Reviewed the repo notes and rec
 
 **New risks recorded** (`roadmap.md`): continuous operation (minutes of idle → gesture → idle; drift ~5 cm per clip, heading checked over 8 s only), no listening behaviour, robot self-noise for barge-in, no observation history.
 
+**Built: observation-history experiment** (code only, no real training yet)
+- Task **`Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation-History10`**: `booster_k1_flat_tracking_env_cfg(actor_history_length=10)` sets the actor group's `history_length` (critic unchanged). Actor input 1220 = 122 × 10
+- mjlab's layout (read from `observation_manager.py` / `circular_buffer.py`): per term, frames oldest → newest (`[A_t-9..A_t, B_t-9..B_t, ...]`); after a reset the first frame fills every slot
+- `policy.onnx` metadata gains `observation_history_length` (`observation_dims` stay the stacked sizes the network sees). `TrackingPolicy.history_length` / `.frame_dims`; new `deploy.ObservationHistory` stacks one-frame observations in mjlab's order; `sim2sim` uses it (no change for history 0)
+- `tests/test_deploy.py::test_observation_history_matches_mjlab`: deploy stacking vs mjlab for 15 steps incl. a mid-run reset, 1e-5. Suite: 18 passed (CPU, 110 s)
+- CPU smoke run (`WANDB_MODE=offline uv run train ...-History10 --env.commands.motion.motion-file logs/motions/waves_2clip.npz --env.scene.num-envs 64 --agent.max-iterations 2 --gpu-ids None`): trains, exports `policy.onnx` (obs 1220, history 10, frame dims sum 122); `sim2sim --policy` on it runs (falls at 1.18 s, expected after 2 iterations)
+- `booster_deploy`'s `k1_gesture_tracking` refuses a history policy at startup (its size check expects `command` 44, gets 440). Teach it `ObservationHistory` only if history wins
+
 ## Next
 Current step: **gesture generator** (EMAGE smoke test → retrieval generator v0), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 3 live test 2.
 
 **0. This week**
-- Speech: step 3 live test 2 (20 turns with pauses), log, commit, then pause
-- Club GPU: history experiment (`history_length` 10 on the actor group, No-State-Estimation, `train-ab:v0`, 6k it, `tee` to `logs/train_history10.txt`); eval on `heldout-val:v0` vs `y1r48dhc`
+- ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)
+- Club GPU (`git pull` first; same settings as `y1r48dhc` except the task, so the comparison is fair):
+  ```
+  source ~/bmcox2/.wandb_env; E=bmcox2-university-of-illinois-urbana-champaign
+  uv run train Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation-History10 \
+    --registry-name $E/motion_upload/beat2-full-torso-train-ab:v0 \
+    --env.scene.num-envs 4096 --agent.max-iterations 6000 --agent.seed 42 \
+    --agent.run-name history10-nse-train-ab 2>&1 | tee logs/train_history10.txt
+  ```
+  Then `eval-tracking --task Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation-History10 ...` on `heldout-val:v0` + `val:v1`, `tools/eval_summary.py` vs `y1r48dhc` (193/194, 3.82 cm; val 468/472, 4.57 cm), and `sim2sim` from standing on the 15 held-out clips. Adopt if clearly better; watch iteration time (input 1220 vs 122)
 - EMAGE smoke test on ~5 TTS WAVs from `speech/runs/` → GMR → `ground_clip` → `eval-tracking` + `sim2sim --video`; list what breaks (jitter, foot sliding, joint limits, falls)
 - **Thursday robot session:** dry run + `check_dry_run.py`, gantry hold; ask/test whether the SDK can drive arms + head while Booster's controller holds the legs; record the K1 mics with motors running; time laptop ↔ robot round trip; note the compute module
-- After Thursday: retrieval generator v0. First download BEAT2 audio for the training takes (only 9 takes have audio). Done when a `speech.loop` reply plays as a dubbed `sim2sim` video with synced gestures, plus a 2-minute continuous run with no fall
+- After Thursday: retrieval generator v0, plan in **`notes/gesture_plan.md`** (written 2026-11-11; steps 0 EMAGE smoke test → 1 library audio + sync check → 2 features/units → 3 matching + stitching → 4 idle/continuous → 5 evaluation vs random + real mocap → 6 speech loop hook). Start: step 1, download BEAT2 `wave16k` for 3–4 training speakers (all training takes ~9.3 GB, held-out ~2 GB)
 
 **Robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): normal + `--push` eval on the ranked clips (club GPU; command in the 2026-11-08 session) → bring-up: dry run + `check_dry_run.py` first, then gantry hold → clip → floor → demo with audio.
 
