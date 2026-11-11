@@ -267,3 +267,37 @@ Test-set replay (12 one-sentence recordings, `speech.vad --testset`):
   → **LLM default switched to qwen3.8-27b** + the stricter prompt. Watch the outlier.
 - Remaining latency is step 4 (stream TTS from the first chunk) and a faster TTS (GPU / cloud).
   Speech paused here (roadmap 2026-11-10); resume at step 4.
+
+## 2026-11-11: Step 4, streaming (`speech/src/speech/streaming.py`)
+
+Design: LLM stream (main thread) → `Chunker` (cut at `, ; : . ! ?` + space once a piece has enough
+words) → TTS worker thread (Kokoro, one piece at a time) → `Player` (one open 24 kHz output stream,
+20 ms blocks, plays pieces back to back, counts silence while waiting = gaps, records when each
+piece started). Captions: each piece is printed when it starts playing. LLM default is
+qwen3.8-27b (short replies).
+
+**Piece sizes** (offline: Kokoro voicing each piece for real, playback simulated):
+
+| First piece ≥ / later ≥ (words) | Voicing first piece median / p90 | Replies with gaps |
+|---|---|---|
+| whole reply (no streaming), 20 older replies | 2.03 / 3.91 s | 0 / 20 |
+| sentences only | 0.83 / 2.22 s | 1 / 20 (1.15 s) |
+| 3 / 6, 20 older replies | 0.80 / 1.29 s | 1 / 20 (0.29 s) |
+| 3 / 6, 12 qwen test-set replies | 0.96 / 1.54 s | 0 / 12 |
+| **2 / 6, 12 qwen replies (default)** | **0.81 / 1.54 s** | **0 / 12** |
+| 1 / 6, 12 qwen replies | 0.63 / 0.95 s | 2 / 12 (≤ 0.57 s after "Cool.") |
+
+Qwen writes short comma-free sentences, so the first piece is usually a whole 5–7 word sentence
+(~1 s to voice on CPU). No speed penalty from voicing in a separate thread (checked).
+
+**Test set with streaming (3 / 6 pieces, no speaker, 12 items):** STT 0.27 s, LLM first piece 0.25 s,
+voicing first piece 1.12 s, **first audio ready 1.71 s median / 2.06 s p90** (non-streamed reply
+ready was 2.58 / 3.93 s); 0 simulated gaps.
+
+**Real speaker, silent audio (volume × 0, real Kokoro timing):** playback starts within 0.01 s of
+the first piece being ready; 2 full turns via `Pipeline.run_turn`: voice started 1.84 s and 1.58 s
+after speech end (push-to-talk timing; hands-free adds ~0.32 s endpoint); one measured gap 0.16 s
+(after "Hey there.") in another reply. Output latency 0.04 s.
+
+Expected live hands-free response: ~0.32 + 0.3 + 0.25 + 0.8–1.1 ≈ **1.7–2.0 s** (was 3.71 s median).
+Under 1 s still needs a faster first piece: GPU Kokoro or cloud TTS (`speech_plan.md` budget).

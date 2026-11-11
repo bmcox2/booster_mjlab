@@ -8,8 +8,10 @@ Each turn is saved in runs/<session>/turn_NN/ with the same files the single sta
 timing.json (when each step finished). Every turn is also appended to runs/latency.jsonl;
 summarize with: uv run python -m speech.latency
 
-This is step 1-2 of notes/speech_plan.md: one turn at a time, nothing overlaps yet. The models
-are loaded once at the start, so each turn only pays for the actual work.
+With [stream] enabled (step 4 of notes/speech_plan.md) the robot starts speaking the first
+piece of its reply while the rest is still being written and voiced (speech/streaming.py).
+Without it, each stage waits for the previous one to finish. The models are loaded once at the
+start, so each turn only pays for the actual work.
 """
 
 import json
@@ -24,6 +26,7 @@ from speech.audio import describe, find_device, record_until_enter, save_wav
 from speech.config import RUNS_DIR, load_config
 from speech.llm import ChatModel, session_history
 from speech.metrics import word_error_rate
+from speech.streaming import Player, stream_reply
 from speech.stt import SpeechToText
 from speech.timing import TurnTimer, config_label
 from speech.tts import KOKORO_SAMPLE_RATE, TextToSpeech
@@ -44,6 +47,17 @@ class Pipeline:
         self.llm = ChatModel(cfg["llm"])
         # Warm-up: the first use of a model is slower than the rest (memory setup, caches).
         self.tts.synthesize("Ready.")
+        self.streaming = cfg.get("stream", {}).get("enabled", False)
+        self.players: dict[int, Player] = {}  # one open speaker stream per output device
+
+    def player(self, device: int) -> Player:
+        if device not in self.players:
+            self.players[device] = Player(device, KOKORO_SAMPLE_RATE)
+        return self.players[device]
+
+    def close(self) -> None:
+        for p in self.players.values():
+            p.close()
 
     def run_turn(self, audio: np.ndarray, turn: Path, timer: TurnTimer,
                  output_device: int | None, mode: str, history: list[dict] | None = None,
@@ -75,6 +89,19 @@ class Pipeline:
         if history is None:
             history = session_history(turn)
         messages = self.llm.build_messages(history, transcript["text"])
+        if self.streaming:
+            player = self.player(output_device) if output_device is not None else None
+            reply, speech, tts_info = stream_reply(self.llm, self.tts, messages, timer,
+                                                   self.cfg["stream"], player, KOKORO_SAMPLE_RATE)
+            save_json(turn / "request.json", {"model": self.llm.cfg["model"], "messages": messages})
+            save_json(turn / "reply.json", reply)
+            save_wav(turn / "reply.wav", speech, KOKORO_SAMPLE_RATE)
+            save_json(turn / "tts.json", tts_info)
+            meta["reply_audio_seconds"] = tts_info["audio_seconds"]
+            record = timer.save(turn, meta)
+            print(f"[{summary_line(record)}]")
+            return record
+
         llm_start = time.monotonic()
         reply = self.llm.reply(messages)
         timer.mark("llm_first_token", llm_start + reply["first_token_seconds"])
@@ -107,6 +134,16 @@ class Pipeline:
 
 def summary_line(record: dict) -> str:
     s = record["stages"]
+    if "first_audio" in s:  # streaming
+        start = s.get("response", s["first_audio"])
+        heard = "voice started" if "response" in s else "first audio ready"
+        endpoint = f"end of turn {s['endpoint']:.2f}, " if s.get("endpoint") else ""
+        gaps = record.get("gaps_s", 0)
+        return (f"{heard} after {start:.2f} s: {endpoint}speech-to-text {s.get('stt', 0):.2f}, "
+                f"LLM first piece {s.get('llm_first_chunk', 0):.2f}, "
+                f"voicing first piece {s.get('tts_first_chunk', 0):.2f}; "
+                f"{record.get('chunks', 0)} pieces, gaps {gaps:.2f} s"
+                + ("" if record.get("gaps_measured", True) else " (simulated)"))
     reply_ready = s.get("response", record["events"].get("tts_done", 0.0))
     endpoint = f"end of turn {s['endpoint']:.2f}, " if s.get("endpoint") else ""
     return (f"answer after {reply_ready:.2f} s: {endpoint}speech-to-text {s.get('stt', 0):.2f}, "
@@ -144,6 +181,7 @@ def main() -> None:
         pipeline.run_turn(audio, session / f"turn_{turn_number:02d}", timer, out_dev, mode="live")
         print()
 
+    pipeline.close()
     print(f"saved {turn_number} turns in {session}")
     print("timing summary: uv run python -m speech.latency")
 
@@ -154,8 +192,7 @@ def hands_free(pipeline: "Pipeline", cfg: dict, in_dev: int, out_dev: int, sessi
     from speech.vad import Listener
 
     listener = Listener(cfg["vad"], in_dev)
-    print(f"Hands-free: just talk. Your turn ends after {cfg['vad']['silence_ms']} ms of silence. "
-          "Ctrl+C to quit.\n")
+    print("Hands-free: just talk; the robot answers when you're done. Ctrl+C to quit.\n")
     turn_number = 0
     try:
         while True:
@@ -175,6 +212,7 @@ def hands_free(pipeline: "Pipeline", cfg: dict, in_dev: int, out_dev: int, sessi
         pass
     finally:
         listener.close()
+        pipeline.close()
     print(f"\nsaved {turn_number} turns in {session}")
     print("timing summary: uv run python -m speech.latency --mode live")
 

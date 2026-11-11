@@ -47,6 +47,13 @@ system_prompt = """You are a friendly robot talking out loud. Reply in plain spo
 at most 2 short sentences and under 30 words, like a person chatting. Start with a few short words. \
 No markdown, lists, dashes, emojis, or symbols that can't be spoken."""
 
+[stream]
+# Step 4: speak the reply in pieces while the rest is still being written and voiced.
+enabled = true
+first_min_words = 2          # first piece: cut at the first comma / sentence end after 2+ words (1 left gaps)
+min_words = 6                # later pieces: 6+ words (shorter pieces leave gaps: Kokoro can't keep up)
+max_words = 25               # cut a long stretch without punctuation anyway
+
 [tts]
 engine = "kokoro"
 voice = "bm_daniel"          # British male; picked 2026-11-08 from `uv run python -m speech.voices`

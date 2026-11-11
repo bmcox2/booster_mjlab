@@ -125,6 +125,8 @@ noise; blocking work in the audio callback causing dropped frames.
 
 ## Step 4. Streaming, and the framework decision (3–4 sessions)
 
+**Streaming built 2026-11-11** (`speech/src/speech/streaming.py`, threads + one open speaker stream, not asyncio): chunker (first piece ≥ 2 words, then ≥ 6, cut at , ; : . ! ?), TTS worker thread, `Player` that measures gaps and per-piece play times. Test set: first audio 1.71 s → see `speech_bench.md`. Left: live test; framework spike (Pipecat) not done.
+
 **Why now:** with numbers (step 2) and a real end-of-turn (step 3), you know exactly which waits
 to overlap. Streaming means the robot starts speaking the first sentence while the LLM is still
 writing the rest.

@@ -11,8 +11,10 @@ Events (in order):
     stt_done         transcript ready
     llm_first_token  first piece of the reply arrived
     llm_first_sentence  first full sentence arrived (when streamed TTS could start, step 4)
+    llm_first_chunk  first speakable piece of the reply complete (streaming)
+    tts_first_audio  first piece voiced (streaming): the robot can start talking
     llm_done         whole reply arrived
-    tts_done         reply audio ready
+    tts_done         whole reply voiced
     playback_start   audio handed to the speaker; you hear it output_latency_s later
     playback_end     audio finished
 """
@@ -32,6 +34,9 @@ STAGES = {
     "llm_first_token": ("stt_done", "llm_first_token"),
     "llm_first_sentence": ("stt_done", "llm_first_sentence"),
     "llm_total": ("stt_done", "llm_done"),
+    "llm_first_chunk": ("stt_done", "llm_first_chunk"),
+    "tts_first_chunk": ("llm_first_chunk", "tts_first_audio"),
+    "first_audio": ("speech_end", "tts_first_audio"),  # streaming: audio could start here
     "tts": ("llm_done", "tts_done"),
     "reply_ready": ("speech_end", "tts_done"),  # = response minus the hand-off to the speaker
     "handoff": ("tts_done", "playback_start"),
@@ -73,5 +78,6 @@ def config_label(cfg: dict) -> str:
                 else f"local/{stt['local']['model']}")
     if stt.get("prompt"):
         stt_name += "+hints"
+    stream = "+stream" if cfg.get("stream", {}).get("enabled") else ""
     return (f"stt={stt_name} | llm={cfg['llm']['model']} | "
-            f"tts={cfg['tts']['voice']}@{cfg['tts'].get('cpu_threads', 'default')}threads")
+            f"tts={cfg['tts']['voice']}@{cfg['tts'].get('cpu_threads', 'default')}threads{stream}")

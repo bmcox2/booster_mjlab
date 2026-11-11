@@ -28,6 +28,7 @@ Audio devices are chosen in Ubuntu Settings → Sound (`config.toml` uses `pipew
 
 `TURN` defaults to the most recent turn. Models, voice and provider: `config.toml`.
 Every turn also writes `timing.json` (events on one clock, 0 = you stopped talking) and a line in `runs/latency.jsonl`.
+Streaming (`[stream]` in `config.toml`, on by default): the reply is cut into pieces at commas / sentence ends and each piece is voiced and played while the rest is still being made (`streaming.py`); `tts.json` lists every piece with when it was ready and when it played. Set `enabled = false` for the old one-stage-at-a-time loop.
 Speech-to-text: Groq Whisper by default, local faster-whisper as automatic fallback (`[stt]` in `config.toml`).
 `testset/*.wav` is your voice and is gitignored (the repo is public); `testset/testset.json` holds the correct transcripts.
 
