@@ -1056,8 +1056,23 @@ Analysis only: no code changed, nothing trained. Reviewed the repo notes and rec
 - CPU smoke run (`WANDB_MODE=offline uv run train ...-History10 --env.commands.motion.motion-file logs/motions/waves_2clip.npz --env.scene.num-envs 64 --agent.max-iterations 2 --gpu-ids None`): trains, exports `policy.onnx` (obs 1220, history 10, frame dims sum 122); `sim2sim --policy` on it runs (falls at 1.18 s, expected after 2 iterations)
 - `booster_deploy`'s `k1_gesture_tracking` refuses a history policy at startup (its size check expects `command` 44, gets 440). Teach it `ObservationHistory` only if history wins
 
+## 2026-11-11: speech step 4 (streaming) + fixes; speech paused
+
+**Built** (`speech/src/speech/streaming.py`, on by default via `[stream]` in `speech/config.toml`)
+- LLM stream → `Chunker` (cut at `, ; : . ! ?` + space; first piece ≥ 2 words, later ≥ 6) → TTS worker thread (Kokoro) → `Player` (one open 24 kHz output stream, plays pieces back to back, measures gaps and when each piece started). Captions print each piece when it starts playing. `tts.json` lists every piece (text, start sample, ready / played times): the hook for gesture sync
+- Kokoro padding trimmed (~0.25 s before + ~0.45 s after each piece made 0.7 s pauses); natural pause appended to the end of each piece (300 ms after `. ! ?`, 150 ms after `, ; :`)
+- End of turn: Smart Turn needs ≥ 0.95 during the first 800 ms of a pause, then 0.8 (`smart_turn_strict_*`)
+- LLM: `<think>` blocks stripped from qwen's stream; an empty reply is retried once with a nudge, then "Mm-hm."; empty replies left out of the history
+
+**Results** (details in `notes/speech_bench.md`)
+- Live test 1 with streaming (14 turns): **response 1.79 s median / 2.24 s p90** (was 3.71 / 8.50 s); measured gaps 0; voicing the first piece 0.71 s
+- Complaints → fixes: 0.7 s pauses between pieces (Kokoro padding, above); 5 cut-offs in 14 turns at pauses ("...talking about" scored 0.81) → strict threshold (replay of 30 live turns: the 6 cut-offs wait ≥ 1.1 s, finished turns still 0.22 s median)
+- Live test 2 (17 turns): fewer cut-offs, pauses more natural; voice still sounds robotic (Kokoro; later). Robot silent on 2 turns: qwen3.8-27b returned 1 token and no text after a statement, and the empty reply in the history primed the next one → retry + history filter above. Replaying that request 5×: 1 empty, retried, answered
+
+**Left for when speech resumes:** barge-in (step 5: you keep talking, the robot stops; also the real fix for pauses > 1 s after a complete sentence), a less robotic voice (Orpheus / ElevenLabs / Cartesia, or GPU Kokoro), < 1 s needs faster first audio than Kokoro on CPU (0.65–1.1 s), Pipecat spike (not done)
+
 ## Next
-Current step: **gesture generator** (EMAGE smoke test → retrieval generator v0), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 3 live test 2.
+Current step: **gesture generator** (EMAGE smoke test → retrieval generator v0), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)
@@ -1088,13 +1103,11 @@ Current step: **gesture generator** (EMAGE smoke test → retrieval generator v0
 - Milestone checks with `1de2pner`: no regression on the 3 waves + Scott 34–44 s (within 20% of each specialist, 50/50); 5 held-out clips in `play` dubbed with audio
 - Final run (after hands-on K1 + ankle model): A+B data **`beat2-full-torso-train-ab:v0`** (`--registry-name`; replaces the hand-combined `logs/motions/beat2-full-torso-train-ab.npz` on the club PC), longer, pick the checkpoint by heldout-val, score `test` / `heldout-test` / `heldout-conv` once
 
-**2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Steps 1–2 done 2026-11-08 (budget in `speech_bench.md`: TTS first audio is the problem). **Paused after step 3 live test 2 (2026-11-10)**; the items below resume with step 4:
-- Listen to `testset/pause_short.wav` and `point.wav` (`uv run python -m speech.audio --play testset/<id>.wav`), fix their references
-- Optional once: check logged times against a phone recording of you + the laptop (plan step 2.5)
-- TTS first audio ≤ ~0.15 s: accept Orpheus terms in the Groq console and benchmark it; Kokoro on GPU when the dGPU is back; maybe Cartesia / ElevenLabs Flash
-- System prompt: open with a short phrase; personality later (bot is bland)
-- Step 3 in progress: `speech.vad` (Silero VAD + silence endpointing, `--testset` replay) and `speech.loop --hands-free` (half-duplex) built 2026-11-08. Live test 1 (silence 600 ms): 0 false turns in 1 min of noise, response 2.27 s median, 1 cut-off. Smart Turn v3.2 added (200 ms check, threshold 0.8, re-check 300 ms, 2 s fallback): test set 0 cut, 224 ms. Left: live test 2 (20 turns with pauses), then step 4 streaming (first chunk), step 5 barge-in
-- Fixed 2026-11-08: Kokoro thread count (was 14, and 1 once Silero loads); test set rerun: reply ready 2.58 / 3.93 s
+**2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Steps 1–4 done (2026-11-08 → 2026-11-11): hands-free, streaming, response 1.8 s median. **Paused.** When it resumes:
+- Step 5 barge-in (talk over the robot to stop it; PipeWire echo cancel on laptop speakers; needs the K1 mic check for the robot)
+- Voice: less robotic (Groq Orpheus is fast but 100 req/day free; ElevenLabs / Cartesia free tiers; GPU Kokoro when the dGPU is back). < 1 s needs first audio ≤ ~0.15 s
+- Watch: qwen empty replies (retry logs `retried_empty` in reply.json), `<think>` tags, short replies waiting 0.8 s under the strict end-of-turn rule
+- Personality / system prompt; step 6 tool calls; Pipecat spike (optional)
 
 **3. Hardware / people**
 - Hands-on K1: compute variant, SDK joint control, custom policy vs Booster's controller; confirm mic array, speaker, battery, Doubao integration

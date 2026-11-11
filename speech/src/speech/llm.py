@@ -30,6 +30,44 @@ from speech.config import latest_turn, load_config
 SENTENCE_END = re.compile(r"[.!?](\s|$)")
 
 
+class ThinkFilter:
+    """Drop <think>...</think> blocks from streamed text. qwen3.8-27b sometimes starts its reply
+    with an (empty) "thinking" block, which the voice would read out. Pieces can split a tag
+    ("<thi" + "nk>"), so a possible partial tag at the end is held back until the next piece."""
+
+    OPEN, CLOSE = "<think>", "</think>"
+
+    def __init__(self):
+        self.buffer, self.inside = "", False
+
+    def feed(self, piece: str) -> str:
+        self.buffer += piece
+        out = ""
+        while True:
+            if self.inside:
+                i = self.buffer.find(self.CLOSE)
+                if i < 0:
+                    self.buffer = self.buffer[-(len(self.CLOSE) - 1):]
+                    return out
+                self.buffer, self.inside = self.buffer[i + len(self.CLOSE):], False
+                continue
+            i = self.buffer.find(self.OPEN)
+            if i >= 0:
+                out += self.buffer[:i]
+                self.buffer, self.inside = self.buffer[i + len(self.OPEN):], True
+                continue
+            hold = max((k for k in range(1, len(self.OPEN)) if self.buffer.endswith(self.OPEN[:k])),
+                       default=0)
+            out += self.buffer[:len(self.buffer) - hold]
+            self.buffer = self.buffer[len(self.buffer) - hold:]
+            return out
+
+    def flush(self) -> str:
+        out = "" if self.inside else self.buffer
+        self.buffer = ""
+        return out
+
+
 class ChatModel:
     def __init__(self, cfg: dict):
         self.cfg = cfg
@@ -39,7 +77,11 @@ class ChatModel:
         return ([{"role": "system", "content": self.cfg["system_prompt"]}]
                 + history + [{"role": "user", "content": user_text}])
 
-    def reply(self, messages: list[dict], on_text=None) -> dict:
+    NUDGE = {"role": "system", "content": "Always say something short out loud in reply, "
+                                          "even just a brief reaction. Never stay silent."}
+    FALLBACK_TEXT = "Mm-hm."  # said if the model stays silent twice
+
+    def reply(self, messages: list[dict], on_text=None, _start: float | None = None) -> dict:
         """Send messages, stream the answer back piece by piece, return text + timing.
 
         Streaming = the server sends the answer a few words at a time as it writes it, instead of
@@ -51,9 +93,10 @@ class ChatModel:
         if "reasoning_effort" in self.cfg:
             extra["reasoning_effort"] = self.cfg["reasoning_effort"]
 
-        start = time.monotonic()
+        start = _start if _start is not None else time.monotonic()  # a retry keeps the first start
         first_token_seconds = first_sentence_seconds = None
         pieces, usage = [], None
+        thinking = ThinkFilter()
         stream = self.client.chat.completions.create(
             model=self.cfg["model"], messages=messages, stream=True,
             stream_options={"include_usage": True}, **extra)
@@ -61,7 +104,9 @@ class ChatModel:
             if chunk.usage:  # the last chunk carries the token counts
                 usage = chunk.usage.model_dump()
             if chunk.choices and chunk.choices[0].delta.content:
-                piece = chunk.choices[0].delta.content
+                piece = thinking.feed(chunk.choices[0].delta.content)
+                if not pieces and not piece.strip():
+                    continue  # nothing speakable yet (thinking block, leading newlines)
                 if first_token_seconds is None:
                     first_token_seconds = time.monotonic() - start
                 pieces.append(piece)
@@ -69,6 +114,24 @@ class ChatModel:
                     first_sentence_seconds = time.monotonic() - start
                 if on_text:
                     on_text(piece)
+        tail = thinking.flush()
+        if tail and (pieces or tail.strip()):
+            pieces.append(tail)
+            if on_text:
+                on_text(tail)
+
+        if not "".join(pieces).strip() and _start is not None:
+            # Silent twice: say a short acknowledgement rather than nothing.
+            if on_text:
+                on_text(self.FALLBACK_TEXT)
+            pieces = [self.FALLBACK_TEXT]
+            first_token_seconds = first_sentence_seconds = time.monotonic() - start
+        if not "".join(pieces).strip() and _start is None:
+            # Seen 2026-11-11 with qwen3.8-27b: after a statement that needs no answer, it sometimes
+            # ends its reply at once (1 token, no text) and the robot just stays silent. Ask once
+            # more with a nudge; timings then count from the first attempt.
+            retry = self.reply(messages + [self.NUDGE], on_text, _start=start)
+            return {**retry, "retried_empty": True}
 
         return {
             "text": "".join(pieces).strip(),
@@ -89,7 +152,8 @@ def session_history(turn: Path) -> list[dict]:
         if earlier.name >= turn.name:
             break
         transcript, reply = earlier / "transcript.json", earlier / "reply.json"
-        if transcript.exists() and reply.exists():
+        if transcript.exists() and reply.exists() and json.loads(reply.read_text())["text"]:
+            # (empty replies are left out: they teach the model that silence is an answer)
             history.append({"role": "user", "content": json.loads(transcript.read_text())["text"]})
             history.append({"role": "assistant", "content": json.loads(reply.read_text())["text"]})
     return history
