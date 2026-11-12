@@ -12,7 +12,7 @@ its K1 body positions, and its units (``motion.cut_units``). Everything goes int
 - ``clip_*``: name, take, speaker, start (s in the take), offset/length (rows in the frame arrays),
   source (the grounded GMR ``.pkl`` it was converted from, 30 fps: what the generator stitches)
 - ``audio`` (N, 5) ``audio.FEATURES``; ``motion`` (N, 9) ``motion.MOTION_FEATURES``; ``joint_pos`` (N, 22);
-  ``twist`` (N,) trunk heading relative to the feet (``motion.twist``)
+  ``twist`` (N,) trunk heading relative to the feet (``motion.twist``); ``trunk_over_feet`` (N, 2)
 - ``unit_clip``, ``unit_start``, ``unit_end``: units as frame ranges inside their clip
 - ``jaw_*``: the jaw check of every take considered (passed or not)
 """
@@ -103,7 +103,7 @@ def build(cfg: LibraryCfg) -> Path:
 
     bnames = body_names()
     jp, bp, bq = z["joint_pos"], z["body_pos_w"], z["body_quat_w"]
-    clip_rows, audio_parts, motion_parts, joint_parts, twist_parts, units = [], [], [], [], [], []
+    clip_rows, audio_parts, motion_parts, joint_parts, twist_parts, over_parts, units = [], [], [], [], [], [], []
     offset, short_audio = 0, 0
     feats_cache: dict[str, np.ndarray] = {}
     for i in picked:
@@ -130,6 +130,7 @@ def build(cfg: LibraryCfg) -> Path:
         motion_parts.append(mot.astype(np.float32))
         joint_parts.append(jp[a:a + n])
         twist_parts.append(M.twist(bp[a:a + n], bq[a:a + n], bnames).astype(np.float32))
+        over_parts.append(M.trunk_over_feet(bp[a:a + n], bq[a:a + n], bnames).astype(np.float32))
         offset += n
 
     cn, ct, cs, cst, co, cl, csrc = zip(*clip_rows)
@@ -142,7 +143,7 @@ def build(cfg: LibraryCfg) -> Path:
         clip_name=np.array(cn), clip_take=np.array(ct), clip_speaker=np.array(cs), clip_start_s=np.array(cst),
         clip_offset=np.array(co), clip_length=np.array(cl), clip_source=np.array(csrc),
         audio=np.concatenate(audio_parts), motion=np.concatenate(motion_parts), joint_pos=np.concatenate(joint_parts),
-        twist=np.concatenate(twist_parts),
+        twist=np.concatenate(twist_parts), trunk_over_feet=np.concatenate(over_parts),
         unit_clip=uc, unit_start=us, unit_end=ue,
         jaw_take=np.array(jt), jaw_lag_s=np.array([jaw[t]["lag_s"] for t in jt]),
         jaw_corr=np.array([jaw[t]["corr"] for t in jt]), jaw_passed=np.array([jaw[t]["passed"] for t in jt]),

@@ -80,7 +80,7 @@ Real "done" only after hardware deployment.
 | 6 | Smooth output, no jitter | Not measured. Add an action-rate / jerk metric to `eval-tracking` |
 | 7 | Checkpoint frozen, config reproducible, eval numbers logged | Deployment candidate `y1r48dhc` (No-State-Estimation); final run pending (after rows 8–9 and the hardware questions) |
 | 8 | Observation history (added 2026-11-10) | Experiment: actor `history_length` 10 vs `y1r48dhc` on `heldout-val`. A mjlab-based study (arXiv 2607.19903) found no history raised base errors 38–50%. Adopt if it wins; then `deploy/` must stack frames |
-| 9 | Continuous operation (added 2026-11-10) | 10-minute reference (idle → gestures → idle, generated or stitched) in sim: no fall, drift and heading error under a set limit. Today's evidence is 4–20 s clips (drift ~5 cm per clip) |
+| 9 | Continuous operation (added 2026-11-10) | **Met in sim 2026-11-11** (`gesture conversation`, `y1r48dhc`): 10.1-min conversation, no fall (plain + 3 with pushes and 40 ms delay), drift 8 cm plain / 17 cm with pushes, heading within 8°. Position creeps ~0.5–1 cm/min (no position sensing): consider a foot-slip penalty in the final run; measure on the robot |
 
 ## Steps (re-ordered 2026-11-10)
 

@@ -95,6 +95,19 @@ class GenCfg:
     speaker: str | None = None
     """Only use this speaker's units (e.g. 9_miranda): one consistent style."""
     foot_lock: bool = True
+    idle_mean_speed: float = 0.10
+    """Idle (listening) units: mean hand speed below this (m/s) ..."""
+    idle_peak_speed: float = 0.25
+    """... and never faster than this. 1,806 units, 53 min in library v0."""
+    idle_seg_s: float = 2.0
+    idle_noise: float = 1.0
+    """Random cost added to idle candidates (calmness spans ~0-1), so each idle segment gets a different
+    short list and the calmest few units don't dominate."""
+    max_side_shift: float = 0.08
+    """With foot lock: skip units whose trunk goes further than this (m) sideways from between the feet
+    (over one leg); a locked stance can't reach it (miranda_1_5_5_t515-530, 12 cm, held 65 frames)."""
+    reuse_gap_s: float = 60.0
+    """A unit may come back only after this long (a viewer notices repeats close together)."""
     """Keep the feet on one stance (leg IK); off = blended legs, feet slide between units."""
 
 
@@ -124,6 +137,10 @@ class Units:
         self.strokes = np.full((n, 12), np.nan)  # stroke ends, frames from the unit start
         self.next = np.full(n, -1)  # the unit that continues this one in its clip
         self.speaker = lib.speaker[self.clip]
+        self.speed_mean = np.zeros(n)
+        self.speed_peak = np.zeros(n)
+        side = np.abs(L["trunk_over_feet"][:, 1]).astype(np.float64)
+        self.side_shift = np.array([side[lib.offset[c] + a:lib.offset[c] + b].max() for c, a, b in lib.units])
         ends_by_clip = {}
         for u, (ci, a, b) in enumerate(lib.units):
             o, cl = lib.offset[ci], lib.length[ci]
@@ -133,6 +150,7 @@ class Units:
             sl = slice(o + a2, o + b2)
             self.audio[u] = summarize(lib.feats[sl], lib.voiced_mask[sl], lib.raw_pitch[sl], FPS)[cols]
             self.activity[u] = lib.speed[o + a:o + b].mean()
+            self.speed_mean[u], self.speed_peak[u] = self.activity[u], lib.speed[o + a:o + b].max()
             self.start_pose[u], self.end_pose[u] = joint_pos[o + a], joint_pos[o + b - 1]
             self.start_hand[u], self.end_hand[u] = hands[o + a], hands[o + b - 1]
             self.start_twist[u], self.end_twist[u] = tw[o + a], tw[o + b - 1]
@@ -177,6 +195,8 @@ class Reply:
     accents: np.ndarray  # frames (reply audio clock)
     words: list[tuple[str, float, float]]
     seconds: float
+    kind: np.ndarray | None = None  # per frame, conversations only: 1 = robot speaking, 0 = idle
+    audio: np.ndarray | None = None  # 16 kHz, what plays with the motion (audio clock)
 
 
 def load_reply(path: Path) -> Reply:
@@ -191,7 +211,74 @@ def load_reply(path: Path) -> Reply:
     tts = wav.parent / "tts.json"
     if tts.exists():
         words = [(w["word"], float(w["start"]), float(w["end"])) for w in json.loads(tts.read_text()).get("words", [])]
-    return Reply(wav, feats, voiced, pitch, strong_accents(feats, FPS), words, len(x) / rate)
+    return Reply(wav, feats, voiced, pitch, strong_accents(feats, FPS), words, len(x) / rate, audio=x)
+
+
+def load_conversation(sessions: list[Path], max_s: float | None = None, start_idle_s: float = 2.0,
+                      end_idle_s: float = 3.0) -> tuple[Reply, list[dict]]:
+    """Speech-loop sessions replayed on their real timeline, as one query: per turn the robot listens
+    while the user speaks (``input.wav``, ``input_audio_seconds``), waits until its reply starts
+    (``playback_start`` - ``endpoint`` in ``timing.json``), then speaks (``reply.wav``). Listening and
+    waiting are idle; the audio track carries the user's voice there and the reply where it speaks."""
+    blocks: list[tuple[str, float, Path | None, Reply | None]] = [("idle", start_idle_s, None, None)]
+    total = start_idle_s
+    for session in sessions:
+        for turn in sorted(Path(session).glob("turn_*"), key=lambda t: int(t.name.split("_")[1])):
+            tj = turn / "timing.json"
+            if not tj.exists() or not (turn / "reply.wav").exists():
+                continue
+            t = json.loads(tj.read_text())
+            if t.get("reply_audio_seconds", 0) < 0.5:  # no reply (e.g. a glitch): the robot only listens
+                listen = float(t.get("input_audio_seconds", 0.0))
+                blocks.append(("idle", listen + 1.0, turn / "input.wav", None))
+                total += listen + 1.0
+                continue
+            ev = t.get("events", {})
+            wait = max(0.2, ev.get("playback_start", 1.0) - ev.get("endpoint", 0.0))
+            listen = float(t.get("input_audio_seconds", 0.0))
+            reply = load_reply(turn)
+            blocks += [("idle", listen + wait, turn / "input.wav", None), ("reply", reply.seconds, turn, reply)]
+            total += listen + wait + reply.seconds
+            if max_s and total >= max_s:
+                break
+        if max_s and total >= max_s:
+            break
+    blocks.append(("idle", end_idle_s, None, None))
+
+    hop = 16000 // round(FPS)
+    feats, voiced, pitch, kind, audio, accents, words, timeline = [], [], [], [], [], [], [], []
+    f0 = 0
+    for kind_name, seconds, src, reply in blocks:
+        if kind_name == "reply":
+            n = len(reply.feats)
+            feats.append(reply.feats)
+            voiced.append(reply.voiced)
+            pitch.append(reply.pitch)
+            a = reply.audio
+            accents.append(reply.accents + f0)
+            words += [(w, s0 + f0 / FPS, s1 + f0 / FPS) for w, s0, s1 in reply.words]
+        else:
+            n = round(seconds * FPS)
+            feats.append(np.zeros((n, 5)))
+            voiced.append(np.zeros(n, bool))
+            pitch.append(np.zeros(n))
+            a = np.zeros(0)
+            if src is not None and src.exists():  # the user's voice while the robot listens
+                a, rate = A.load_audio(src)
+                if rate != 16000:
+                    g = np.gcd(rate, 16000)
+                    a = resample_poly(a, 16000 // g, rate // g)
+        seg_audio = np.zeros(n * hop)
+        a = A.match_level(a) if len(a) else a  # user and robot voices at the same level
+        seg_audio[:min(len(a), n * hop)] = a[:n * hop]
+        audio.append(seg_audio)
+        kind.append(np.full(n, 1 if kind_name == "reply" else 0, np.int8))
+        timeline.append({"kind": kind_name, "start_s": f0 / FPS, "seconds": n / FPS, "source": str(src) if src else None})
+        f0 += n
+    q = Reply(Path("conversation"), np.concatenate(feats), np.concatenate(voiced), np.concatenate(pitch),
+              np.concatenate(accents) if accents else np.zeros(0, int), words, f0 / FPS,
+              kind=np.concatenate(kind), audio=np.concatenate(audio))
+    return q, timeline
 
 
 def segment(reply: Reply, cfg: GenCfg) -> list[tuple[int, int]]:
@@ -233,12 +320,47 @@ def segment(reply: Reply, cfg: GenCfg) -> list[tuple[int, int]]:
 # ---------------------------------------------------------------------------------------- search
 
 
-def candidates(units: Units, reply: Reply, seg: tuple[int, int], cfg: GenCfg, rng) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Best ``k`` units for one segment and their costs (without transitions)."""
+def segment_query(q: Reply, cfg: GenCfg) -> list[tuple[int, int]]:
+    """``segment`` for a reply; for a conversation, speaking blocks are segmented the same way and
+    idle blocks are split evenly into ~``idle_seg_s`` pieces."""
+    if q.kind is None:
+        return segment(q, cfg)
+    out = []
+    edges = np.flatnonzero(np.diff(q.kind)) + 1
+    for a, b in zip(np.concatenate([[0], edges]), np.concatenate([edges, [len(q.kind)]])):
+        a, b = int(a), int(b)
+        if q.kind[a] == 1:
+            acc = q.accents[(q.accents >= a) & (q.accents < b)] - a
+            words = [(w, s0 - a / FPS, s1 - a / FPS) for w, s0, s1 in q.words if a / FPS <= s0 < b / FPS]
+            sub = Reply(q.wav, q.feats[a:b], q.voiced[a:b], q.pitch[a:b], acc, words, (b - a) / FPS)
+            out += [(a + s0, a + s1) for s0, s1 in segment(sub, cfg)]
+        else:
+            k = max(1, round((b - a) / (cfg.idle_seg_s * FPS)))
+            cuts = np.linspace(a, b, k + 1).round().astype(int)
+            out += list(zip(cuts[:-1].tolist(), cuts[1:].tolist()))
+    return out
+
+
+def candidates(units: Units, reply: Reply, seg: tuple[int, int], cfg: GenCfg, rng,
+               idle: bool = False) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Best ``k`` units for one segment and their costs (without transitions). ``idle``: a listening
+    stretch: calm units only, calmer preferred, with a little randomness for variety."""
     qa, qb = seg
     stretch = (qb - qa) / units.length
     ok = np.abs(np.log(stretch)) <= np.log1p(cfg.max_stretch)
     allowed = units.speaker == cfg.speaker if cfg.speaker else np.ones(len(ok), bool)
+    if cfg.foot_lock:
+        allowed &= units.side_shift <= cfg.max_side_shift
+    if idle:
+        allowed &= (units.speed_mean < cfg.idle_mean_speed) & (units.speed_peak < cfg.idle_peak_speed)
+        idx = np.flatnonzero(ok & allowed)
+        if len(idx) < cfg.k:
+            idx = np.flatnonzero(allowed)[np.argsort(np.abs(np.log(stretch[allowed])))[: cfg.k * 4]]
+        cost = (units.speed_mean[idx] / cfg.idle_mean_speed
+                + cfg.w_length * np.abs(np.log(stretch[idx])) / np.log1p(cfg.max_stretch)
+                + rng.uniform(0, cfg.idle_noise, len(idx)))
+        order = np.argsort(cost)[: cfg.k]
+        return idx[order], cost[order], {"speech_frac": 0.0, "accents": [], "idle": True}
     idx = np.flatnonzero(ok & allowed)
     if len(idx) < cfg.k:  # nothing fits closely: take the closest lengths
         idx = np.flatnonzero(allowed)[np.argsort(np.abs(np.log(stretch[allowed])))[: cfg.k * 4]]
@@ -278,16 +400,25 @@ def candidates(units: Units, reply: Reply, seg: tuple[int, int], cfg: GenCfg, rn
     return idx[order], cost[order], {"speech_frac": speech_frac, "accents": acc.tolist(), "activity_target": target}
 
 
-def search(units: Units, cands: list[np.ndarray], costs: list[np.ndarray], cfg: GenCfg) -> list[int]:
-    """Viterbi over segments: node costs + transition costs; each unit used at most once."""
+def search(units: Units, cands: list[np.ndarray], costs: list[np.ndarray], cfg: GenCfg,
+           seg_start_s: list[float] | None = None) -> list[int]:
+    """Viterbi over segments: node costs + transition costs; a unit may not come back within
+    ``reuse_gap_s`` (``seg_start_s``: each segment's start; without it, never).
+
+    Every too-early repeat is forbidden and the search runs again, until none are left. (One repeat
+    per pass, 10 passes, was enough for a reply but left a 10-minute conversation reusing 38 idle
+    units for 173 segments: a visible listening loop, 2026-11-11.)"""
     costs = [c.copy() for c in costs]
-    for _ in range(10):
+    trans = [None] + [
+        cfg.w_transition * units.transition(cands[s - 1][:, None], cands[s][None, :]) / units.trans_scale
+        + cfg.w_speaker * (units.speaker[cands[s - 1]][:, None] != units.speaker[cands[s]][None, :])
+        for s in range(1, len(cands))
+    ]
+    for _ in range(200):
         best = costs[0].copy()
         back = []
         for s in range(1, len(cands)):
-            t = units.transition(cands[s - 1][:, None], cands[s][None, :]) / units.trans_scale
-            t = t + cfg.w_speaker * (units.speaker[cands[s - 1]][:, None] != units.speaker[cands[s]][None, :]) / cfg.w_transition
-            tot = best[:, None] + cfg.w_transition * t
+            tot = best[:, None] + trans[s]
             back.append(np.argmin(tot, axis=0))
             best = tot.min(axis=0) + costs[s]
         path = [int(np.argmin(best))]
@@ -295,15 +426,17 @@ def search(units: Units, cands: list[np.ndarray], costs: list[np.ndarray], cfg: 
             path.append(int(bk[path[-1]]))
         path = path[::-1]
         chosen = [int(cands[s][i]) for s, i in enumerate(path)]
-        seen, dup = set(), None
+        last, repeats = {}, []
         for s, u in enumerate(chosen):
-            if u in seen:
-                dup = (s, path[s])
-                break
-            seen.add(u)
-        if dup is None:
+            t = seg_start_s[s] if seg_start_s else 0.0
+            if u in last and (seg_start_s is None or t - last[u] < cfg.reuse_gap_s):
+                repeats.append((s, path[s]))
+            last[u] = t
+        if not repeats:
             return chosen
-        costs[dup[0]][dup[1]] += 1e6  # used earlier in this reply: forbid here, search again
+        for s, i in repeats:  # used earlier in this timeline: forbid here, search again
+            costs[s][i] += 1e6
+    print(f"[search] warning: {len(repeats)} units still repeat after 200 passes")
     return chosen
 
 
@@ -521,7 +654,8 @@ def foot_lock(motion: dict, grounder, max_residual_m: float = 0.005, smooth_s: f
                  for s in sides}
     out_pos, out_rot, out_dof = root_pos.copy(), root_rot.copy(), dof.copy()
     q_prev = {s: dof[0, g.feet[s]["leg_cols"]].copy() for s in sides}
-    worst, fails = 0.0, 0
+    q_good = dict(q_prev)  # the last pose that reached its target
+    worst, fails, fail_frames = 0.0, 0, []
     for t in range(n):
         dyaw = yaw[0] - yaw[t]
         out_pos[t, :2] = from_stance(to_stance(t, root_pos[t, :2]))
@@ -530,16 +664,28 @@ def foot_lock(motion: dict, grounder, max_residual_m: float = 0.005, smooth_s: f
         for s in sides:
             target = np.concatenate([from_stance(canon[s]), foot_p[s][t, 2:]])
             q, res = _solve_leg_soft(g, g.feet[s], target, yaw[0] + canon_yaw[s], q_prev[s])
-            if res > max_residual_m:  # unreachable: hold the previous legs rather than jump
+            if res > max_residual_m:
+                # Retry from fresh starts: this frame's own (unlocked) legs and the last good pose.
+                # Without this one bad frame cascaded: every later frame started from the stuck pose
+                # and a leg stayed unsolved for 106 s of a 10-min conversation (2026-11-11).
+                for seed in (dof[t, g.feet[s]["leg_cols"]], q_good[s]):
+                    q2, r2 = _solve_leg_soft(g, g.feet[s], target, yaw[0] + canon_yaw[s], seed)
+                    if r2 < res:
+                        q, res = q2, r2
+            if res > max_residual_m:  # still unreachable: hold the last good legs rather than jump
                 fails += 1
-                q = q_prev[s]
+                fail_frames.append(t)
+                q = q_good[s]
+            else:
+                q_good[s] = q
+                worst = max(worst, res)
             g.data.qpos[g.feet[s]["leg_adr"]] = q
             out_dof[t, g.feet[s]["leg_cols"]] = q
             q_prev[s] = q
-            worst = max(worst, res)
     motion = {**motion, "root_pos": out_pos, "root_rot": out_rot, "dof_pos": out_dof}
     motion["_foot_lock"] = {"worst_residual_m": float(worst), "frames_over": int(fails),
-                            "stance_width_cm": float(np.linalg.norm(canon["left"] - canon["right"]) * 100)}
+                            "stance_width_cm": float(np.linalg.norm(canon["left"] - canon["right"]) * 100),
+                            "held_s": [round(f / PKL_FPS, 2) for f in sorted(set(fail_frames))][:200]}
     return motion
 
 
@@ -554,27 +700,30 @@ def _tool(name: str):
         sys.path.pop(0)
 
 
-def generate(cfg: GenCfg, units: Units | None = None) -> Path:
+def generate(cfg: GenCfg, units: Units | None = None, query: Reply | None = None, name: str | None = None,
+             timeline: list[dict] | None = None) -> Path:
+    """One reply (``cfg.reply``) or a prepared query (``load_conversation``) -> reference folder."""
     rng = np.random.default_rng(cfg.seed)
     units = units or Units(cfg.library)
     t0 = time.perf_counter()
-    reply = load_reply(cfg.reply)
+    reply = query if query is not None else load_reply(cfg.reply)
     t_feat = time.perf_counter() - t0
-    segs = segment(reply, cfg)
+    segs = segment_query(reply, cfg)
     cands, costs, info = [], [], []
     for seg in segs:
-        c, k, i = candidates(units, reply, seg, cfg, rng)
+        idle = reply.kind is not None and reply.kind[seg[0]] == 0
+        c, k, i = candidates(units, reply, seg, cfg, rng, idle=idle)
         cands.append(c)
         costs.append(k)
         info.append(i)
-    chosen = search(units, cands, costs, cfg)
+    chosen = search(units, cands, costs, cfg, [a / FPS for a, _ in segs])
     t_search = time.perf_counter() - t0 - t_feat
     motion = stitch(units, segs, chosen, cfg)
     crossfades = motion.pop("_crossfade_s")
     t_stitch = time.perf_counter() - t0 - t_feat - t_search
 
     turn = cfg.reply if cfg.reply.is_dir() else cfg.reply.parent
-    name = cfg.name or f"{turn.parent.name}_{turn.name}" + ("_random" if cfg.random_baseline else "")
+    name = name or cfg.name or f"{turn.parent.name}_{turn.name}" + ("_random" if cfg.random_baseline else "")
     out = cfg.out_dir / name
     out.mkdir(parents=True, exist_ok=True)
     raw_pkl, grounded = out / "motion.pkl", out / "motion_grounded.pkl"
@@ -587,6 +736,9 @@ def generate(cfg: GenCfg, units: Units | None = None) -> Path:
         t1 = time.perf_counter()
         motion = foot_lock(motion, grounder)
         lock = {**motion.pop("_foot_lock"), "seconds": time.perf_counter() - t1}
+        if lock["frames_over"]:
+            print(f"[generate] WARNING: foot lock couldn't reach the stance on {lock['frames_over']} frames "
+                  f"(worst {lock['worst_residual_m'] * 100:.1f} cm): legs held, feet will jump. Try --speaker.")
         with open(raw_pkl, "wb") as f:
             pickle.dump(motion, f)
     grounder.ground(raw_pkl, grounded)
@@ -597,12 +749,17 @@ def generate(cfg: GenCfg, units: Units | None = None) -> Path:
     arrays = convert_batched(grounded)
     n = len(arrays["joint_pos"])
     np.savez(out / "reference.npz", **arrays, clip_names=np.array([name]), clip_lengths=np.array([n]))
-    wav_out = out / "reply.wav"
-    wav_out.write_bytes(reply.wav.read_bytes())
+    from scipy.io import wavfile
+
+    track = reply.audio if reply.kind is not None else A.match_level(reply.audio)  # conversations: per voice
+    wavfile.write(out / "reply.wav", 16000, (np.clip(track, -1, 1) * 32767).astype(np.int16))
+    np.savez(out / "query.npz", feats=reply.feats, voiced=reply.voiced, pitch=reply.pitch, accents=reply.accents,
+             kind=reply.kind if reply.kind is not None else np.ones(len(reply.feats), np.int8))
 
     lib = units.lib
     plan = {
-        "reply": str(cfg.reply), "cfg": {k: str(v) for k, v in asdict(cfg).items()},
+        "reply": str(cfg.reply) if query is None else None, "timeline": timeline,
+        "cfg": {k: str(v) for k, v in asdict(cfg).items()},
         "audio_offset_s": LEAD_S, "reply_s": reply.seconds, "frames_50fps": n,
         "time_s": {"features": t_feat, "search": t_search, "stitch": t_stitch},
         "qc": {"flags": row.get("flags", []), "severe": row.get("severe", [])}, "foot_lock": lock,
@@ -611,11 +768,12 @@ def generate(cfg: GenCfg, units: Units | None = None) -> Path:
                       "speaker": str(lib.speaker[units.clip[u]]), "unit_frames": [int(units.a[u]), int(units.b[u])],
                       "stretch": float((b - a) / units.length[u]), "cost": float(costs[s][list(cands[s]).index(u)]),
                       "continues_previous": bool(s and units.next[chosen[s - 1]] == u),
-                      "speech_frac": info[s].get("speech_frac"), "accents_out_frames": info[s].get("accents")}
+                      "speech_frac": info[s].get("speech_frac"), "accents_out_frames": info[s].get("accents"),
+                      "idle": bool(info[s].get("idle", False))}
                      for s, ((a, b), u) in enumerate(zip(segs, chosen))],
     }
     (out / "plan.json").write_text(json.dumps(plan, indent=1))
-    print(f"[generate] {name}: {reply.seconds:.1f} s reply, {len(segs)} segments, "
+    print(f"[generate] {name}: {reply.seconds:.1f} s, {len(segs)} segments, "
           f"features {t_feat * 1000:.0f} ms, search {t_search * 1000:.0f} ms, stitch {t_stitch * 1000:.0f} ms; "
           f"foot lock {lock.get('seconds', 0):.1f} s (worst IK residual {lock.get('worst_residual_m', 0) * 1000:.1f} mm); "
           f"QC flags: {row.get('flags') or 'none'}, severe: {row.get('severe') or 'none'} -> {out}")
@@ -692,9 +850,13 @@ def check_reference(d: Path) -> dict:
     feet = [bn.index(f) for f in ("left_foot_link", "right_foot_link")]
     travel = max(np.linalg.norm(np.diff(z["body_pos_w"][:, f, :2], axis=0), axis=1).sum() for f in feet)
     speed = hand_features(z["body_pos_w"], z["body_quat_w"], bn, FPS)[:, 2]
-    reply = load_reply(Path(plan["reply"]))
+    qz = np.load(d / "query.npz") if (d / "query.npz").exists() else None
+    reply = load_reply(Path(plan["reply"])) if qz is None else None
+    feats = qz["feats"] if qz is not None else reply.feats
+    kind = qz["kind"] if qz is not None else np.ones(len(feats), np.int8)
+    acc0 = qz["accents"] if qz is not None else reply.accents
     lead = round(plan["audio_offset_s"] * FPS)
-    acc = reply.accents + lead
+    acc = acc0 + lead
     acc = acc[acc < len(speed)]
     ends = stroke_ends(speed, FPS)
     hits = [bool(len(ends) and np.min(np.abs(ends - a)) <= 7) for a in acc]
@@ -703,9 +865,11 @@ def check_reference(d: Path) -> dict:
     rng = np.random.default_rng(0)
     fake = rng.integers(lead, len(speed), size=(500, max(len(acc), 1)))
     chance = float(np.mean(np.min(np.abs(ends[None, None, :] - fake[..., None]), axis=-1) <= 7)) if len(ends) else 0.0
-    sp = reply.feats[:, 4] > 0
+    sp = feats[:, 4] > 0
     n = min(len(sp), len(speed) - lead)
-    talk, pause = speed[lead:lead + n][sp[:n]], speed[lead:lead + n][~sp[:n]]
+    s_al, k_al = speed[lead:lead + n], kind[:n]
+    talk, pause = s_al[sp[:n] & (k_al == 1)], s_al[~sp[:n] & (k_al == 1)]
+    idle = s_al[k_al == 0]
     return {
         "name": d.name, "seconds": len(q) / FPS, "segments": len(plan["segments"]),
         "seam_max_speed": float(v[near].max()) if near.any() else 0.0,
@@ -714,6 +878,7 @@ def check_reference(d: Path) -> dict:
         "hand_speed": float(speed.mean()), "accents": int(len(acc)), "accent_hits": int(sum(hits)), "accent_chance": chance,
         "hand_speed_pause": float(pause.mean()) if len(pause) else float("nan"),
         "hand_speed_talk": float(talk.mean()), "pause_s": float(len(pause) / FPS),
+        "hand_speed_idle": float(idle.mean()) if len(idle) else float("nan"), "idle_s": float(len(idle) / FPS),
         "speakers": sorted({x["speaker"] for x in plan["segments"]}),
     }
 
@@ -721,11 +886,11 @@ def check_reference(d: Path) -> dict:
 def check(cfg: CheckCfg) -> list[dict]:
     rows = [check_reference(Path(d)) for d in sorted(cfg.dirs) if (Path(d) / "plan.json").exists()]
     print(f"{'reference':38} {'segs':>4} {'seam/other max rad/s':>20} {'feet cm':>7} {'hands m/s':>9} "
-          f"{'accent hits (chance)':>20} {'pause/talk m/s':>15}  QC")
+          f"{'accent hits (chance)':>20} {'pause/talk m/s':>15} {'idle m/s':>8}  QC")
     for r in rows:
         print(f"{r['name']:38} {r['segments']:4} {r['seam_max_speed']:9.1f} / {r['other_max_speed']:<8.1f} "
               f"{r['feet_travel_cm']:7.1f} {r['hand_speed']:9.2f} {r['accent_hits']:5}/{r['accents']:<3} ({100 * r['accent_chance']:3.0f}%)    "
-              f"{r['hand_speed_pause']:7.2f}/{r['hand_speed_talk']:.2f}  {r['qc_severe'] or r['qc_flags'] or 'ok'}")
+              f"{r['hand_speed_pause']:7.2f}/{r['hand_speed_talk']:.2f} {r['hand_speed_idle']:8.2f}  {r['qc_severe'] or r['qc_flags'] or 'ok'}")
     for kind in ("matched", "random"):
         R = [r for r in rows if r["name"].endswith("_random") == (kind == "random")]
         if not R:
@@ -736,3 +901,29 @@ def check(cfg: CheckCfg) -> list[dict]:
               f"{np.mean([r['hand_speed'] for r in R]):.2f} m/s, worst seam {max(r['seam_max_speed'] for r in R):.1f} rad/s, "
               f"max feet travel {max(r['feet_travel_cm'] for r in R):.1f} cm, severe QC {sum(bool(r['qc_severe']) for r in R)}")
     return rows
+
+
+@dataclass
+class ConversationCfg:
+    sessions: tuple[Path, ...]
+    """Speech-loop session folders (speech/runs/<session>), replayed in order."""
+    max_minutes: float | None = None
+    name: str | None = None
+    library: Path = GenCfg.library
+    out_dir: Path = Path("logs/gesture/conversations")
+    seed: int = 0
+    speaker: str | None = "9_miranda"
+    """The persona: every unit from one speaker. Mixing speakers mixes stances (feet width, trunk twist:
+    Lawrence twists ~2x Miranda), and one locked stance couldn't reach all of them (foot-lock IK
+    failed on 299 frames of a 10-min mixed run, 2026-11-11). Miranda: least twist, most calm units."""
+
+
+def conversation(cfg: ConversationCfg) -> Path:
+    """A whole conversation (idle while listening, gestures while speaking) as one reference."""
+    q, timeline = load_conversation(list(cfg.sessions), cfg.max_minutes * 60 if cfg.max_minutes else None)
+    name = cfg.name or "conv_" + "+".join(Path(s).name for s in cfg.sessions) + (f"_{cfg.max_minutes:g}min" if cfg.max_minutes else "")
+    gcfg = GenCfg(reply=Path(cfg.sessions[0]), library=cfg.library, out_dir=cfg.out_dir, seed=cfg.seed, speaker=cfg.speaker)
+    n_turns = sum(t["kind"] == "reply" for t in timeline)
+    speaking = sum(t["seconds"] for t in timeline if t["kind"] == "reply")
+    print(f"[conversation] {q.seconds / 60:.1f} min, {n_turns} replies, robot speaking {speaking / q.seconds:.0%}")
+    return generate(gcfg, query=q, name=name, timeline=timeline)

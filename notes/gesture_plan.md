@@ -239,6 +239,16 @@ drift in a policy that can't see its position (No-State-Estimation).
 **Pitfalls:** slow drift that only shows after minutes; idle that looks frozen or robotic; the
 robot ending a reply mid-gesture when the audio stops (finish the unit, then retract).
 
+**Result (2026-11-11, `uv run gesture conversation`; details in `log.md`):** a whole speech-loop
+session plays as one reference: calm units while listening (hands 0.05 vs 0.35 m/s talking),
+matched gestures while speaking, one foot-locked stance, one speaker per conversation (persona).
+2.4 min and 10.1 min: Gate 1 clean, no falls with pushes and 40 ms delay, drift 6–8 cm plain
+(17 cm with pushes over 10 min), heading within 8°. Position creeps slowly because the policy can't
+sense it (final tracker run: consider a foot-slip penalty). Found on the way: idle repeats (fixed:
+no unit back within 60 s), mixed stances (persona), a foot-lock failure cascade (retries from
+fresh starts), units with the trunk over one leg (skipped). Listening behaviour (nods, gaze) not
+built.
+
 ## Step 5. Evaluation against baselines (2 sessions)
 
 **Why:** "it looks good to me" isn't enough to decide anything, and the same set-up later judges a
@@ -312,7 +322,21 @@ silence at the start; use `tts.json`'s word times, which already include it).
     context gestures / sparse / dense); pick the rate where "natural" peaks.
   - Gesture sources: AMASS waves and points (kept for this), BEAT2 clips found via TextGrid word
     alignments, phone video -> GVHMR -> GMR for missing ones (e.g. self-pointing).
-- **Listening behaviour:** small nods and gaze toward the speaker while the user talks.
+- **Listening reactions** (requested 2026-11-11 after the streaming-session video). Three levels, easiest first:
+  1. **Backchannel nods while the user talks** (easy, 1–2 sessions): small head-pitch nods (K1 has head
+     pitch) layered onto the idle motion, triggered at the user's phrase ends (short pauses found by the
+     speech loop's VAD), rate-limited (e.g. at most one per ~5 s, not every pause). People nod at pauses
+     and at low-pitch phrase ends (backchannel research, e.g. Ward & Tsukahara 2000). No LLM needed; the
+     head is light, so the tracker should follow it easily (check in sim).
+  2. **A reaction in the thinking gap** (medium): the 1.5–3.7 s between the user stopping and the reply
+     starting is currently plain idle. The LLM can open its reply with a reaction tag (`[surprised]`,
+     `[amused]`, `[thinking]`, `[agree]`) that plays right away, before any speech: it fills the wait
+     and makes latency feel shorter. Needs a small reaction library (BEAT2 conversation takes, AMASS, or
+     phone video -> GVHMR -> GMR) and the same sparse-rate rules as the context layer.
+  3. **Reactions in the middle of the user's speech** (hard): needs streaming STT and something judging
+     meaning on partial transcripts with low latency. Later, if 1–2 aren't enough.
+  - Same principle as the context layer: a missing reaction looks fine, a wrong or constant one looks
+    robotic. Judge with the step 5 viewer test.
 - **Neural generator (paper angle):** a K1-native model trained on the library itself (audio →
   K1 joints, ~23 h). Retrieval is its baseline (step 5 set-up). Only if retrieval looks repetitive.
 - **On the robot:** the generator is CPU-light, so it can run on the K1 or the laptop; the

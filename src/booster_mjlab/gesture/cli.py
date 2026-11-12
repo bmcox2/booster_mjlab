@@ -6,6 +6,7 @@
     uv run gesture generate --reply speech/runs/<session>/turn_01 [--random-baseline]
     uv run gesture render --dir logs/gesture/replies/<name> [--push] [--obs-delay-steps 2]
     uv run gesture check --dirs logs/gesture/replies/*
+    uv run gesture conversation --sessions speech/runs/<session> [...] [--max-minutes 10]
 """
 
 from __future__ import annotations
@@ -16,7 +17,16 @@ from pathlib import Path
 import tyro
 
 from booster_mjlab.gesture.analysis import AnalysisCfg, run
-from booster_mjlab.gesture.generate import CheckCfg, GenCfg, RenderCfg, check, generate, render
+from booster_mjlab.gesture.generate import (
+    CheckCfg,
+    ConversationCfg,
+    GenCfg,
+    RenderCfg,
+    check,
+    conversation,
+    generate,
+    render,
+)
 from booster_mjlab.gesture.library import LibraryCfg, build, report
 
 
@@ -33,6 +43,7 @@ def main() -> None:
         "generate": GenCfg,
         "render": RenderCfg,
         "check": CheckCfg,
+        "conversation": ConversationCfg,
     })
     if isinstance(cmd, LibraryCfg):
         build(cmd)
@@ -44,6 +55,8 @@ def main() -> None:
         render(cmd)
     elif isinstance(cmd, CheckCfg):
         check(cmd)
+    elif isinstance(cmd, ConversationCfg):
+        conversation(cmd)
     else:
         run(cmd)
 

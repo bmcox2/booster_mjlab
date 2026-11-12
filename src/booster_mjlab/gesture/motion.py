@@ -60,6 +60,19 @@ def twist(body_pos: np.ndarray, body_quat: np.ndarray, body_names: list[str]) ->
     return (trunk_yaw - stance_yaw + np.pi) % (2 * np.pi) - np.pi
 
 
+def trunk_over_feet(body_pos: np.ndarray, body_quat: np.ndarray, body_names: list[str]) -> np.ndarray:
+    """(T, 2) trunk position relative to the midpoint between the feet, in the stance frame (x forward,
+    y left; stance as in ``twist``), m. A weight shift onto one leg moves it sideways. With the feet
+    locked to one stance (generate.foot_lock), units far off center or twisted far can't be reached
+    by the legs."""
+    across = body_pos[:, body_names.index(FEET[0]), :2] - body_pos[:, body_names.index(FEET[1]), :2]
+    yaw = np.arctan2(across[:, 1], across[:, 0]) - np.pi / 2
+    mid = (body_pos[:, body_names.index(FEET[0]), :2] + body_pos[:, body_names.index(FEET[1]), :2]) / 2
+    d = body_pos[:, body_names.index(TRUNK), :2] - mid
+    c, s = np.cos(-yaw), np.sin(-yaw)
+    return np.column_stack([c * d[:, 0] - s * d[:, 1], s * d[:, 0] + c * d[:, 1]])
+
+
 def cut_units(speed: np.ndarray, fps: float, min_s: float = 0.5, max_s: float = 3.0,
               smooth_s: float = 0.2, min_dip: float = 0.1, relative_dip: bool = True) -> list[int]:
     """Unit boundaries (frame indices, first 0, last len(speed)) where the hands pause.

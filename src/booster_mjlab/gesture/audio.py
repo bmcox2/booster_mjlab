@@ -148,3 +148,19 @@ def speech_features(audio: np.ndarray, rate: int, fps: float, n_frames: int | No
     pitch_st = np.where(f0 > 0, 12.0 * np.log2(np.maximum(f0, 1e-6) / med), 0.0)
     speech = speech_mask(loud, fps)
     return np.stack([loud, onset, voiced, pitch_st, speech], axis=1)
+
+
+def match_level(x: np.ndarray, target_db: float = -20.0, rate: int = 16000, peak: float = 0.95) -> np.ndarray:
+    """Scale speech to ``target_db`` dBFS, measured over its active part (20 ms frames within 20 dB
+    of the loudest 10%), so pauses don't count; then scale down if a peak would pass ``peak``.
+    For soundtracks that mix voices: the laptop mic recorded the user ~13 dB louder than Kokoro."""
+    hop = max(1, rate // 50)
+    if len(x) < hop:
+        return x
+    fr = x[: len(x) // hop * hop].reshape(-1, hop)
+    rms = np.sqrt((fr ** 2).mean(axis=1)) + 1e-12
+    active = rms[rms > np.percentile(rms, 90) * 0.1]
+    level = np.sqrt((active ** 2).mean()) if len(active) else rms.max()
+    gain = 10 ** (target_db / 20) / max(level, 1e-9)
+    gain = min(gain, peak / max(np.abs(x).max(), 1e-9))
+    return x * gain

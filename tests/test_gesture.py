@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from booster_mjlab.gesture import audio, motion
@@ -110,3 +112,34 @@ def test_reply_features_match_library_normalization(tmp_path):
     feats, voiced, pitch = recording_features(raw.astype(np.float32))
     np.testing.assert_allclose(feats, lib.feats, atol=1e-5)
     np.testing.assert_array_equal(voiced, lib.voiced_mask)
+
+
+def test_conversation_segments_cover_blocks():
+    """Idle and speaking blocks are segmented separately, contiguously, and never across a block edge."""
+    from booster_mjlab.gesture.generate import GenCfg, Reply, segment_query
+
+    kind = np.concatenate([np.zeros(230), np.ones(300), np.zeros(410), np.ones(120)]).astype(np.int8)
+    n = len(kind)
+    feats = np.zeros((n, 5))
+    feats[kind == 1, 4] = 1.0  # speech wherever the robot speaks
+    words = [("w", s / FPS, s / FPS + 0.2) for s in range(230, 530, 25)] + [("w", s / FPS, s / FPS + 0.2) for s in range(940, 1060, 25)]
+    q = Reply(Path("c"), feats, np.zeros(n, bool), np.zeros(n), np.array([], int), words, n / FPS, kind=kind)
+    segs = segment_query(q, GenCfg(reply=Path("c")))
+    assert segs[0][0] == 0 and segs[-1][1] == n
+    assert all(a[1] == b[0] for a, b in zip(segs, segs[1:]))
+    for a, b in segs:
+        assert len(set(kind[a:b])) == 1, (a, b)  # never straddles idle and speech
+        if kind[a] == 0:
+            assert 1.0 * FPS <= b - a <= 3.0 * FPS
+
+
+def test_match_level_evens_out_voices():
+    quiet = np.concatenate([tone(150, 1.0, amp=0.02), np.zeros(RATE)])  # with a pause: pauses must not count
+    loud = tone(220, 1.0, amp=0.9)
+    levels = []
+    for x in (quiet, loud):
+        y = audio.match_level(x, -20.0, RATE)
+        speech = y[: RATE]
+        levels.append(20 * np.log10(np.sqrt((speech ** 2).mean())))
+        assert np.abs(y).max() <= 0.95 + 1e-9
+    assert abs(levels[0] - levels[1]) < 1.0 and abs(levels[0] + 20) < 1.5

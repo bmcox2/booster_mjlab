@@ -1143,8 +1143,48 @@ Analysis only: no code changed, nothing trained. Reviewed the repo notes and rec
   - Nothing glaringly wrong against the rhythm and sound of the speech. **Missing: context**: gestures that follow the words (pointing, self-reference, emphasis on the important part)
   - Concern raised: context matching must not over-gesture or illustrate every word
 
+## 2026-11-11: gesture step 4 (idle, whole conversations, 2- and 10-minute runs)
+
+**Built**
+- `uv run gesture conversation --sessions speech/runs/<s1> [<s2> ...] [--max-minutes 10] [--speaker 9_miranda]` -> `logs/gesture/conversations/<name>/`: a speech-loop session replayed on its real timeline (`timing.json`: listen = `input_audio_seconds`, wait = `playback_start` − `endpoint`, then the reply) as one query. Idle while listening/waiting, matched gestures while speaking; one search, one stitch, one foot lock for the whole conversation. Audio track: the user's voice while the robot listens, the reply while it speaks
+- Idle units: mean hand speed < 0.10 m/s and never > 0.25 m/s (1,806 units, 53 min in library v0), ~2 s idle segments, calmer preferred plus randomness for variety
+- **Persona:** conversations default to one speaker (`9_miranda`: least trunk twist, most calm units)
+- Library: per-frame `twist` and `trunk_over_feet`; units whose trunk goes > 8 cm sideways (over one leg) are skipped when the feet are locked
+- `sim2sim`: max trunk drift, foot slip and heading error per run, and `--trace <npz>` (positions over time)
+- `gesture check`: hand speed while idle; test for conversation segmentation (idle and speech never mixed in a segment)
+
+**Problems found and fixed**
+- Idle units looped (10 distinct units for 44 idle segments): the search fixed one repeat per pass, 10 passes. Now forbids all too-early repeats each pass until none are left; rule = no unit back within 60 s
+- Mixing speakers broke the foot lock (299 frames unreachable, feet jumped): stances differ (Lawrence twists ~2x Miranda) -> persona
+- 10-min Miranda run: foot lock failed on 3,246 frames (worst 78 cm) and Gate 1 found the feet colliding. Not twist or side shift: one unreachable moment and then a **cascade** (every later frame started from the stuck legs; left leg unsolved for 106 s). Fix: retry from fresh starts (that frame's own legs, last good pose) before holding -> 65 frames, all in two units of one clip with the trunk 12 cm over one leg -> side-shift filter -> 0
+- Note for later: the reference's stance-direction estimate (line between the feet) differs from the trunk by up to 47°; the feet's own headings agree better (p95 22° vs 36°). Not needed now
+
+**Results** (`gesture conversation`, `render`, `check`; policy `y1r48dhc`)
+
+| | 2.4 min (1 session, 7 replies) | 10.1 min (5 sessions, 49 replies) |
+|---|---|---|
+| Build | 21 s | ~60 s (search 0.4 s, foot lock 9 s) |
+| Gate 1 | clean | clean |
+| Falls: plain + 3 runs with pushes and 40 ms delay | 0/4 | 0/4 |
+| Max trunk drift, plain / pushes | 6.3 / 7.2 cm | 8.0 / 17.2 cm |
+| Max heading error | 6.4° | 7.8° |
+| Hand speed idle / talking | 0.05 / 0.36 m/s | 0.06 / 0.34 m/s |
+| Strong accents hit (chance) | 50% (14%) | 56% (14%) |
+
+- Drift trace (`conv_10min/drift.png`, previous mixed-speaker version): heading wanders ±6° but doesn't accumulate (the policy sees its orientation); **position creeps** with no steps (trunk 1.0 / 3.4 / 4.5 cm at 2 / 5 / 10 min), with pushes one real step (~5 cm) then ~1 cm/min. The policy can't sense its position, so nothing pulls it back. Fine for 10-min conversations; watch on the robot; **final tracker run: consider a foot-slip penalty** (feet moving while in contact)
+- Step 4 exit met: 2-min run with no fall and drift < 10 cm; 10-min run done, no fall. Stitched-clip training is **not** needed for falls; for drift, see above
+- Video to watch: `logs/gesture/conversations/conv_2026-11-10_18-19-53_2min/sim_audio.mp4` (user's voice while it listens). The 10-min run has no video (render takes long)
+
+## 2026-11-11: streaming-session video + audio levels
+
+- `gesture conversation --sessions speech/runs/2026-11-11_16-57-05` (the streaming session, 17 turns, 2.6 min): video `logs/gesture/conversations/conv_2026-11-11_16-57-05_streaming/sim_audio.mp4`. No fall, drift 5.8 cm, heading within 7°, idle 0.06 / talking 0.32 m/s
+- Turns without a reply (13–14, the glitch) used to be dropped with the user's words; now they play as listening
+- **Audio levels:** the laptop mic recorded the user at −10 dBFS speech level (peaks at 0 dBFS in most turns: likely clipping) vs Kokoro −23 dBFS, so the user sounded ~4x louder. `audio.match_level` brings each voice block to −20 dBFS (active speech only, peak guard 0.95); conversation videos now match (both −20.0). Test added
+- **Watched by Boston:** transitions between listening and speaking "really well", no issues; stays fairly still on some replies and more expressive on others. What feels least natural is **speech-side**: streaming timing, the voice, the LLM's replies. Context (LLM tags) will help gestures. Wants **context-dependent listening reactions** (nods, surprise): design in `gesture_plan.md` step 7
+- Speech-loop to-do: lower the mic input gain (Settings → Sound → Input: volume) so it stops clipping; check whether clipping hurts STT
+
 ## Next
-Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); next: watch matched vs random videos (`logs/gesture/replies/*/sim_audio.mp4`), then `gesture_plan.md` step 4 (idle, start/end, 2- and 10-minute runs), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
+Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). Next: watch the 2-min conversation video, then `gesture_plan.md` step 5 (blind viewer test) or step 6 (speech loop hook), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)

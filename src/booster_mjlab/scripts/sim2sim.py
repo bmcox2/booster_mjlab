@@ -80,6 +80,8 @@ class Config:
     """Sim only: give the policy the true motion_anchor_pos_b / base_lin_vel, so a state-estimation
     policy (the plain tracking task) can run. Checks this simulator against eval-tracking; never
     possible on the robot. Needs --start reference (the reference's world position must be the robot's)."""
+    trace: Path | None = None
+    """Save run 0's trunk and feet positions and heading error per control step (.npz), to see how drift builds up."""
     video: Path | None = None
     """Write an mp4 of run 0 (needs a working MuJoCo renderer, e.g. MUJOCO_GL=egl)."""
 
@@ -217,6 +219,11 @@ def run_once(cfg: Config, policy: TrackingPolicy, sim: Sim, clip: Reference, see
     states: deque[RobotState] = deque(maxlen=cfg.obs_delay_steps + 1)
     next_push = rng.uniform(1.5, 4.0)
     hand_err, fell_at = [], None
+    # Drift over the clip, from where the robot is when the clip starts: trunk sideways, feet, heading.
+    sim_feet = [next(b for b in range(sim.model.nbody) if sim.model.body(b).name.split("/")[-1] == f)
+                for f in ("left_foot_link", "right_foot_link")]
+    start_trunk, start_feet, drift, slip, heading_err = None, None, 0.0, 0.0, 0.0
+    trace = {"t": [], "trunk": [], "feet": [], "yaw_err": []}
     renderer = None
     for k in range(len(ref)):
         states.append(measure(sim))
@@ -244,6 +251,17 @@ def run_once(cfg: Config, policy: TrackingPolicy, sim: Sim, clip: Reference, see
         if d.xpos[sim.trunk][2] < 0.30 or up < 0.5:  # trunk below 30 cm or tilted > 60 deg: fallen
             fell_at = t
             break
+        if ref.clip_start <= k + 1 < ref.clip_end:
+            if start_trunk is None:
+                start_trunk, start_feet = d.xpos[sim.trunk][:2].copy(), [d.xpos[f][:2].copy() for f in sim_feet]
+            drift = max(drift, float(np.linalg.norm(d.xpos[sim.trunk][:2] - start_trunk)))
+            slip = max(slip, max(float(np.linalg.norm(d.xpos[f][:2] - p0)) for f, p0 in zip(sim_feet, start_feet)))
+            dyaw = ob.yaw_of(d.xquat[sim.trunk]) - ob.yaw_of(ref.anchor_quat[k + 1])
+            heading_err = max(heading_err, abs(float((dyaw + np.pi) % (2 * np.pi) - np.pi)))
+            trace["t"].append(t)
+            trace["trunk"].append(d.xpos[sim.trunk][:2] - start_trunk)
+            trace["feet"].append([d.xpos[f][:2] - p0 for f, p0 in zip(sim_feet, start_feet)])
+            trace["yaw_err"].append(float((dyaw + np.pi) % (2 * np.pi) - np.pi))
         if ref.body_pos is not None and ref.clip_start <= k + 1 < ref.clip_end:
             # Hands relative to the trunk, in the trunk frame: robot vs reference (heading-free).
             R = ob.quat_to_matrix(d.xquat[sim.trunk])
@@ -267,6 +285,8 @@ def run_once(cfg: Config, policy: TrackingPolicy, sim: Sim, clip: Reference, see
                                                 else "end hold" if fell_at >= ref.clip_end * policy.control_dt
                                                 else "clip"),
         "hand_err_cm": 100 * float(np.mean(hand_err)) if hand_err else None,
+        "drift_cm": 100 * drift, "foot_slip_cm": 100 * slip, "heading_err_deg": float(np.degrees(heading_err)),
+        "trace": {k: np.array(v) for k, v in trace.items()},
         "seconds": len(ref) * policy.control_dt,
     }
 
@@ -303,7 +323,12 @@ def main() -> None:
         results.append(r)
         status = "OK  " if r["fell_at_s"] is None else f"FELL at {r['fell_at_s']:.2f} s ({r['phase']})"
         hand = f"hands {r['hand_err_cm']:.1f} cm" if r["hand_err_cm"] is not None else ""
-        print(f"  run {seed}: {status} {hand}")
+        print(f"  run {seed}: {status} {hand} | max drift {r['drift_cm']:.1f} cm, foot slip {r['foot_slip_cm']:.1f} cm, "
+              f"heading off {r['heading_err_deg']:.1f} deg")
+        if cfg.trace and seed == 0:
+            cfg.trace.parent.mkdir(parents=True, exist_ok=True)
+            np.savez(cfg.trace, **r["trace"])
+            print(f"  trace -> {cfg.trace}")
         if frames:
             import mediapy
 
@@ -312,7 +337,10 @@ def main() -> None:
             print(f"  video -> {cfg.video}")
     ok = sum(r["fell_at_s"] is None for r in results)
     errs = [r["hand_err_cm"] for r in results if r["hand_err_cm"] is not None and r["fell_at_s"] is None]
-    print(f"[sim2sim] {ok}/{len(results)} without a fall" + (f", hands {np.mean(errs):.1f} cm" if errs else ""))
+    worst = max(results, key=lambda r: r["drift_cm"])
+    print(f"[sim2sim] {ok}/{len(results)} without a fall" + (f", hands {np.mean(errs):.1f} cm" if errs else "")
+          + f", worst drift {worst['drift_cm']:.1f} cm, foot slip {max(r['foot_slip_cm'] for r in results):.1f} cm, "
+          f"heading {max(r['heading_err_deg'] for r in results):.1f} deg")
 
 
 if __name__ == "__main__":
