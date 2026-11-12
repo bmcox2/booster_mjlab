@@ -741,12 +741,18 @@ def generate(cfg: GenCfg, units: Units | None = None, query: Reply | None = None
                   f"(worst {lock['worst_residual_m'] * 100:.1f} cm): legs held, feet will jump. Try --speaker.")
         with open(raw_pkl, "wb") as f:
             pickle.dump(motion, f)
+    t1 = time.perf_counter()
     grounder.ground(raw_pkl, grounded)
+    t_ground = time.perf_counter() - t1
+    t1 = time.perf_counter()
     row = qc.K1Checker().check(grounded)
     qc.flag([row])
+    t_qc = time.perf_counter() - t1
     from booster_mjlab.scripts.upload_motion import convert_batched
 
+    t1 = time.perf_counter()
     arrays = convert_batched(grounded)
+    t_convert = time.perf_counter() - t1
     n = len(arrays["joint_pos"])
     np.savez(out / "reference.npz", **arrays, clip_names=np.array([name]), clip_lengths=np.array([n]))
     from scipy.io import wavfile
@@ -761,7 +767,10 @@ def generate(cfg: GenCfg, units: Units | None = None, query: Reply | None = None
         "reply": str(cfg.reply) if query is None else None, "timeline": timeline,
         "cfg": {k: str(v) for k, v in asdict(cfg).items()},
         "audio_offset_s": LEAD_S, "reply_s": reply.seconds, "frames_50fps": n,
-        "time_s": {"features": t_feat, "search": t_search, "stitch": t_stitch},
+        # features..ground = what a robot needs at runtime; qc + convert (forward kinematics for body
+        # positions, used only by checks and videos) are offline extras.
+        "time_s": {"features": t_feat, "search": t_search, "stitch": t_stitch, "foot_lock": lock.get("seconds", 0.0),
+                   "ground": t_ground, "qc": t_qc, "convert": t_convert},
         "qc": {"flags": row.get("flags", []), "severe": row.get("severe", [])}, "foot_lock": lock,
         "crossfade_s": crossfades,
         "segments": [{"start_s": a / FPS, "end_s": b / FPS, "unit": int(u), "clip": str(lib.names[units.clip[u]]),
@@ -927,3 +936,21 @@ def conversation(cfg: ConversationCfg) -> Path:
     speaking = sum(t["seconds"] for t in timeline if t["kind"] == "reply")
     print(f"[conversation] {q.seconds / 60:.1f} min, {n_turns} replies, robot speaking {speaking / q.seconds:.0%}")
     return generate(gcfg, query=q, name=name, timeline=timeline)
+
+
+@dataclass
+class ReplayCfg:
+    session: Path
+    """A speech-loop session folder (speech/runs/<session>)."""
+    speaker: str | None = "9_miranda"
+    video: bool = True
+    out_dir: Path = Path("logs/gesture/conversations")
+
+
+def replay(cfg: ReplayCfg) -> Path:
+    """A recorded conversation as one dubbed sim video: ``conversation`` + ``render`` + ``check``."""
+    out = conversation(ConversationCfg(sessions=(cfg.session,), name=f"conv_{cfg.session.name}",
+                                       out_dir=cfg.out_dir, speaker=cfg.speaker))
+    render(RenderCfg(dir=out, video=cfg.video))
+    check(CheckCfg(dirs=(out,)))
+    return out

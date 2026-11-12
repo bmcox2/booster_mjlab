@@ -1183,8 +1183,35 @@ Analysis only: no code changed, nothing trained. Reviewed the repo notes and rec
 - **Watched by Boston:** transitions between listening and speaking "really well", no issues; stays fairly still on some replies and more expressive on others. What feels least natural is **speech-side**: streaming timing, the voice, the LLM's replies. Context (LLM tags) will help gestures. Wants **context-dependent listening reactions** (nods, surprise): design in `gesture_plan.md` step 7
 - Speech-loop to-do: lower the mic input gain (Settings → Sound → Input: volume) so it stops clipping; check whether clipping hurts STT
 
+## 2026-11-11: gesture step 6 (speech loop -> K1 motion per reply)
+
+**Built**
+- `uv run gesture serve` (`gesture/serve.py`): local HTTP service (127.0.0.1:8765), library loaded once (2.9 s), warm-up reply at start (ready in ~8 s), persona `9_miranda`. `POST /reply {"turn": <path>}` -> `<turn>/gesture/` (reference.npz, plan.json, pkl, reply.wav, query.npz, `serve.json` with timings); `GET /health`
+- Speech loop: `speech/src/speech/gesture.py` (`GestureClient`, stdlib only): posts each finished turn from a background thread after playback ends, never blocks; one warning if the service isn't running. Hooked into `Pipeline.run_turn` (streaming and batch paths); test-set runs wait for pending requests. `[gesture]` in `speech/config.toml` (on by default)
+- `uv run gesture replay --session speech/runs/<session> [--no-video]`: conversation + render + check in one command
+- `generate`'s `plan.json` times every stage: features, search, stitch, foot lock, ground (runtime path) + qc, convert (offline extras)
+- Docs: `speech/README.md` (two-terminal setup)
+
+**Fixed on the way (speech side)**
+- Groq refused every `qwen/qwen3.8-27b` request: no `max_tokens`, so Groq assumed a 1,272-token reply, over the free tier's 1,000 output tokens per minute. `llm.py` passes `max_tokens` if set; `config.toml` `max_tokens = 400` (replies ~40 tokens, room for thinking). Checked on 2 test-set items: both answered
+- The service's log was empty when redirected to a file (Python buffers output that isn't a terminal) -> line buffering in `serve`
+
+**Results** (test-set replay of 2 items through the real speech loop + service)
+- Both turns got motion (Gate 1 ok). 6.3 s reply -> motion 0.86 s after posting; 4.0 s -> 0.59 s
+- Per stage (6.3 s / 4.0 s reply): features 26 / 13 ms, search 7 / 4, stitch 6 / 2 (**choosing: 20–40 ms**, under the 100 ms target), foot lock 114 / 76, **ground 240 / 153** (largest runtime stage; mostly redundant after foot lock: feet already planted and level), qc 212 / 165, convert 118 / 73 (offline only)
+- Not done yet: a live laptop conversation with the service running (needs Boston). Motion is made after each reply is spoken (offline); playing it live and before its audio is the streaming step
+
+## 2026-11-11: first standard live test (step 6 exit)
+
+- `tools/live_test.sh` (service + speech loop + video) with the standard script `notes/live_test_script.md`; session `speech/runs/2026-11-11_21-34-08`, video `logs/gesture/conversations/conv_2026-11-11_21-34-08/sim_audio.mp4`
+- **All 10 turns got motion** while talking (service log `logs/gesture_serve_2026-11-11_21-33-15.txt`); motion ready 0.60 s median / 0.92 s max after each reply was posted (runtime path 278 ms median); Gate 1 clean
+- Speech: response (end of user speech -> robot audio) **1.47 s median / 2.08 s max**; line 4's mid-sentence pause not cut off; all 10 lines transcribed correctly; joke has a setup and punch line; replies short and on topic (qwen3.8-27b with `max_tokens = 400`)
+- Conversation check: 53 segments, strong accents hit 59% (chance 15%), hands idle 0.08 / talking 0.34 m/s
+- **Boston:** "Gesturing is doing really good and looks natural." Context (LLM tags) will still help. Happy with how it's coming together
+- **Step 6 exit met** (live conversation, every turn writes a reference, replay video in sync)
+
 ## Next
-Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). Next: watch the 2-min conversation video, then `gesture_plan.md` step 5 (blind viewer test) or step 6 (speech loop hook), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
+Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). Next options: context layer (LLM emphasis/pointing tags), streaming (motion live, before its audio: needed for the robot), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)

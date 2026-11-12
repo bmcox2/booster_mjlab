@@ -92,6 +92,8 @@ class ChatModel:
         extra = {}
         if "reasoning_effort" in self.cfg:
             extra["reasoning_effort"] = self.cfg["reasoning_effort"]
+        if "max_tokens" in self.cfg:  # without it Groq assumes a long reply and can refuse on the free tier
+            extra["max_tokens"] = int(self.cfg["max_tokens"])
 
         start = _start if _start is not None else time.monotonic()  # a retry keeps the first start
         first_token_seconds = first_sentence_seconds = None

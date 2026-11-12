@@ -7,6 +7,8 @@
     uv run gesture render --dir logs/gesture/replies/<name> [--push] [--obs-delay-steps 2]
     uv run gesture check --dirs logs/gesture/replies/*
     uv run gesture conversation --sessions speech/runs/<session> [...] [--max-minutes 10]
+    uv run gesture serve                                   # for the speech loop (step 6)
+    uv run gesture replay --session speech/runs/<session>  # conversation + render + check
 """
 
 from __future__ import annotations
@@ -22,11 +24,14 @@ from booster_mjlab.gesture.generate import (
     ConversationCfg,
     GenCfg,
     RenderCfg,
+    ReplayCfg,
     check,
     conversation,
     generate,
     render,
+    replay,
 )
+from booster_mjlab.gesture.serve import ServeCfg, serve
 from booster_mjlab.gesture.library import LibraryCfg, build, report
 
 
@@ -44,6 +49,8 @@ def main() -> None:
         "render": RenderCfg,
         "check": CheckCfg,
         "conversation": ConversationCfg,
+        "serve": ServeCfg,
+        "replay": ReplayCfg,
     })
     if isinstance(cmd, LibraryCfg):
         build(cmd)
@@ -57,6 +64,10 @@ def main() -> None:
         check(cmd)
     elif isinstance(cmd, ConversationCfg):
         conversation(cmd)
+    elif isinstance(cmd, ServeCfg):
+        serve(cmd)
+    elif isinstance(cmd, ReplayCfg):
+        replay(cmd)
     else:
         run(cmd)
 

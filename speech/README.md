@@ -32,6 +32,24 @@ Streaming (`[stream]` in `config.toml`, on by default): the reply is cut into pi
 Speech-to-text: Groq Whisper by default, local faster-whisper as automatic fallback (`[stt]` in `config.toml`).
 `testset/*.wav` is your voice and is gitignored (the repo is public); `testset/testset.json` holds the correct transcripts.
 
+## K1 motion for each reply (gesture service)
+
+With `[gesture] enabled = true` (config.toml), every reply is posted to the gesture service after the
+robot finishes speaking, which writes the K1 motion into `runs/<session>/turn_NN/gesture/`. It never
+delays the conversation; without the service you get one warning and no motion.
+
+```
+# terminal 1, main repo (~/projects/booster-mjlab): keep it running
+uv run gesture serve
+# terminal 2, speech/
+uv run python -m speech.loop --hands-free
+# afterwards, main repo: the whole conversation as a dubbed sim video
+uv run gesture replay --session speech/runs/<session>
+```
+
+Or all of it in one command from the main repo: `tools/live_test.sh` (service + loop + video when you
+press Ctrl-C), with the standard lines in `notes/live_test_script.md`.
+
 ## Gotchas
 - Bluetooth headsets: using their mic switches them to call mode (HFP); AirPods were silent in it. Use the laptop mic.
 - `faster-whisper` 1.2.1 needs `av<16` (pinned).

@@ -296,6 +296,13 @@ video shows the K1 gesturing in sync with its voice; added delay per turn measur
 **Pitfalls:** the speech loop and the generator disagree about the audio's start time (Kokoro adds
 silence at the start; use `tts.json`'s word times, which already include it).
 
+**Result (2026-11-11, `uv run gesture serve` + `speech/src/speech/gesture.py`; details in `log.md`):** each
+finished reply is posted to a local service (library loaded once) and gets its motion in
+`<turn>/gesture/` within ~0.6–0.9 s, without delaying the conversation; `uv run gesture replay`
+turns a session into a dubbed video. Choosing takes 20–40 ms; foot lock (~0.1 s) and grounding
+(~0.15–0.25 s, largely redundant after foot lock) are the runtime parts to trim before streaming.
+Live test 2026-11-11 (`tools/live_test.sh`, standard script): all 10 turns got motion, Boston: "looks natural". **Step 6 done.**
+
 ## Step 7. Later (notes only, don't build yet)
 
 - **Streaming:** when speech step 4 streams TTS sentence by sentence, run the search per sentence,

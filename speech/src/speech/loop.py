@@ -24,6 +24,7 @@ import sounddevice as sd
 
 from speech.audio import describe, find_device, record_until_enter, save_wav
 from speech.config import RUNS_DIR, load_config
+from speech.gesture import GestureClient
 from speech.llm import ChatModel, session_history
 from speech.metrics import word_error_rate
 from speech.streaming import Player, stream_reply
@@ -49,6 +50,7 @@ class Pipeline:
         self.tts.synthesize("Ready.")
         self.streaming = cfg.get("stream", {}).get("enabled", False)
         self.players: dict[int, Player] = {}  # one open speaker stream per output device
+        self.gesture = GestureClient(cfg.get("gesture", {}))  # K1 motion per reply (gesture service)
 
     def player(self, device: int) -> Player:
         if device not in self.players:
@@ -56,6 +58,7 @@ class Pipeline:
         return self.players[device]
 
     def close(self) -> None:
+        self.gesture.wait()
         for p in self.players.values():
             p.close()
 
@@ -100,6 +103,7 @@ class Pipeline:
             meta["reply_audio_seconds"] = tts_info["audio_seconds"]
             record = timer.save(turn, meta)
             print(f"[{summary_line(record)}]")
+            self.gesture.submit(turn)
             return record
 
         llm_start = time.monotonic()
@@ -125,10 +129,12 @@ class Pipeline:
             record = timer.save(turn, meta)  # save before waiting, so the record is written
             print(f"[{summary_line(record)}]")
             sd.wait()
+            self.gesture.submit(turn)
             return record
 
         record = timer.save(turn, meta)
         print(f"[{summary_line(record)}]")
+        self.gesture.submit(turn)
         return record
 
 

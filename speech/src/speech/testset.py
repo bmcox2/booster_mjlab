@@ -131,6 +131,7 @@ def run(overrides: list[str], only: list[str] | None) -> None:
                                    history=[], reference=item["reference"])
         rows.append((item_id, record))
         time.sleep(2)  # spacing for the free tier's per-minute limits (not part of any timing)
+    pipeline.gesture.wait()  # pending motion requests (gesture service), if any
 
     print(f"\n{'item':12} {'words wrong':>11} {'stt s':>6} {'llm s':>6} {'tts s':>6} {'reply ready s':>14}")
     for item_id, r in rows:
