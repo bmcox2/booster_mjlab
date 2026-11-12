@@ -10,6 +10,7 @@
     uv run gesture serve                                   # for the speech loop (step 6)
     uv run gesture replay --session speech/runs/<session>  # conversation + render + check
     uv run gesture live                                    # K1 gesturing live in a MuJoCo window (step 7)
+    uv run gesture live-video --run logs/gesture/live/<time>   # film a live run afterwards, with sound
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from booster_mjlab.gesture.generate import (
     replay,
 )
 from booster_mjlab.gesture.live import LiveCfg, live
+from booster_mjlab.gesture.live_video import LiveVideoCfg, live_video
 from booster_mjlab.gesture.serve import ServeCfg, serve
 from booster_mjlab.gesture.library import LibraryCfg, build, report
 
@@ -54,6 +56,7 @@ def main() -> None:
         "serve": ServeCfg,
         "replay": ReplayCfg,
         "live": LiveCfg,
+        "live-video": LiveVideoCfg,
     })
     if isinstance(cmd, LibraryCfg):
         build(cmd)
@@ -73,6 +76,8 @@ def main() -> None:
         replay(cmd)
     elif isinstance(cmd, LiveCfg):
         live(cmd)
+    elif isinstance(cmd, LiveVideoCfg):
+        live_video(cmd)
     else:
         run(cmd)
 

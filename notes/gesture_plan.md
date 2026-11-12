@@ -357,8 +357,8 @@ response time not worse than 1.47 s median (first live test).
   1.33 s median before their audio, min 0.71), pre-start 0.67 s before the first piece, 0 falls; Boston:
   nothing glaring. Response 1.59 s median vs 1.47 (Kokoro slower next to the sim; onnxruntime's spinning
   thread pool, 350% CPU, fixed since: `gesture live` 7-24% CPU). Re-check on the next live test.
-- Not built: barge-in cancel (task 5), a video of the live motion itself (the after-video is made again
-  offline), keeping the pre-start unit to its end instead of cutting into it (try if starts look twitchy).
+- Filming a live run: `gesture live-video` (re-runs the tracker on the saved frames, exact; added 2026-11-11).
+- Not built: barge-in cancel (task 5), keeping the pre-start unit to its end instead of cutting into it (try if starts look twitchy).
 
 ## Step 8. Later (notes only, don't build yet)
 

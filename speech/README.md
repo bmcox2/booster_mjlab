@@ -49,12 +49,12 @@ Two services, same address; the loop asks which one is running:
 uv run gesture live
 # terminal 2, speech/
 uv run python -m speech.loop --hands-free
-# afterwards, main repo: the whole conversation as a dubbed sim video (made again, offline)
-uv run gesture replay --session speech/runs/<session>
+# afterwards, main repo: a film of exactly what the robot did live, with both voices
+uv run gesture live-video --run logs/gesture/live/<time>
 ```
 
 Or all of it in one command from the main repo: `tools/live_test.sh` (service + loop + video when you
-press Ctrl-C; `--offline` for `gesture serve`), with the standard lines in `notes/live_test_script.md`.
+press Ctrl-C: it films the live run; `--offline` for `gesture serve` and its replay video), with the standard lines in `notes/live_test_script.md`.
 
 No microphone at hand: `uv run gesture live --replay-session speech/runs/<session> --replay-audio`
 re-sends a recorded session's pieces with their recorded timing and plays the replies.

@@ -143,16 +143,83 @@ def replay_events(session: Path, gap_s: float, max_turns: int | None = None) -> 
     return sorted(events, key=lambda e: e["at"])
 
 
+class Tracker:
+    """One control step of the tracker in plain MuJoCo: reference frame in, physics advanced 20 ms.
+    Fades from the standing pose into the timeline at start, pushes (optional), and stands the robot
+    up again after a fall. ``live`` runs it in real time; ``live_video`` runs it again on the saved
+    timeline, which gives the same motion (same frames in the same order, deterministic physics)."""
+
+    def __init__(self, policy, sim, push: bool = False, obs_delay_steps: int = 0, seed: int = 0, fade_in_s: float = 2.0):
+        from booster_mjlab.deploy import ObservationHistory
+
+        self.policy, self.sim, self.push = policy, sim, push
+        self.rng = np.random.default_rng(seed)
+        self.history = ObservationHistory(policy.frame_dims, policy.history_length)
+        self.states: deque = deque(maxlen=obs_delay_steps + 1)
+        self.last_action = np.zeros(policy.num_joints)
+        self.fade_n, self.fade_k0 = round(fade_in_s * FPS), 0
+        self.next_push = self.rng.uniform(1.5, 4.0)
+        self.falls: list[float] = []
+        self.drift = 0.0
+        self.stand()
+        self.start_xy = sim.data.xpos[sim.trunk][:2].copy()
+
+    def stand(self) -> None:
+        import mujoco
+
+        from booster_mjlab.robots.booster_k1.k1_constants import HOME_KEYFRAME
+
+        sim, policy, d = self.sim, self.policy, self.sim.data
+        mujoco.mj_resetData(sim.model, d)
+        d.qpos[:3] = HOME_KEYFRAME.pos
+        d.qpos[3:7] = (1, 0, 0, 0)
+        d.qpos[sim.qadr] = policy.default_joint_pos
+        d.ctrl[sim.ctrl] = policy.default_joint_pos
+        mujoco.mj_forward(sim.model, d)
+
+    def step(self, k: int, jp: np.ndarray, jv: np.ndarray, aq: np.ndarray) -> float | None:
+        """Control step k with reference frame (jp, jv, aq). Returns the time of a fall, else None."""
+        from booster_mjlab.deploy import RefFrame, build_observation
+        from booster_mjlab.deploy import observation as ob
+        from booster_mjlab.scripts.sim2sim import measure, physics_step
+
+        policy, sim = self.policy, self.sim
+        if k - self.fade_k0 < self.fade_n:  # from the standing pose into the timeline
+            w = (k - self.fade_k0) / self.fade_n
+            w = w * w * (3 - 2 * w)
+            jp, jv = (1 - w) * policy.default_joint_pos + w * jp, w * jv
+        self.states.append(measure(sim))
+        obs = self.history(build_observation(policy.observation_names, policy.frame_dims, self.states[0],
+                                             RefFrame(jp, jv, aq), self.last_action, policy.default_joint_pos))
+        self.last_action = policy.act(obs)
+        sim.data.ctrl[sim.ctrl] = policy.joint_targets(self.last_action)
+        for _ in range(sim.decimation):
+            physics_step(sim)
+        t = (k + 1) * policy.control_dt
+        if self.push and t >= self.next_push:
+            sim.data.qvel[0:2] += self.rng.uniform(-0.14, 0.14, 2)
+            self.next_push = t + self.rng.uniform(1.5, 4.0)
+        d = sim.data
+        self.drift = max(self.drift, float(np.linalg.norm(d.xpos[sim.trunk][:2] - self.start_xy)))
+        if d.xpos[sim.trunk][2] < 0.30 or ob.quat_to_matrix(d.xquat[sim.trunk])[2, 2] < 0.5:
+            self.falls.append(round(t, 2))
+            self.stand()
+            self.history.reset()
+            self.states.clear()
+            self.last_action[:] = 0
+            self.fade_k0 = k + 1
+            return t
+        return None
+
+
 def live(cfg: LiveCfg) -> dict:
     sys.stdout.reconfigure(line_buffering=True)
     sys.setswitchinterval(0.001)  # the planner (Python) must not hold up the 20 ms control loop for long
     import mujoco
 
     import booster_mjlab.tasks  # noqa: F401  (first: fills the task registry; other import orders hit a circular import)
-    from booster_mjlab.deploy import ObservationHistory, RefFrame, TrackingPolicy, build_observation
-    from booster_mjlab.deploy import observation as ob
-    from booster_mjlab.robots.booster_k1.k1_constants import HOME_KEYFRAME
-    from booster_mjlab.scripts.sim2sim import build_sim, measure, physics_step
+    from booster_mjlab.deploy import TrackingPolicy
+    from booster_mjlab.scripts.sim2sim import build_sim
 
     t_load = time.perf_counter()
     policy = TrackingPolicy(_policy_path(cfg))
@@ -340,16 +407,7 @@ def live(cfg: LiveCfg) -> dict:
 
     # ------------------------------------------------------------------------------- control loop
 
-    def reset_robot() -> None:
-        d = sim.data
-        mujoco.mj_resetData(sim.model, d)
-        d.qpos[:3] = HOME_KEYFRAME.pos
-        d.qpos[3:7] = (1, 0, 0, 0)
-        d.qpos[sim.qadr] = policy.default_joint_pos
-        d.ctrl[sim.ctrl] = policy.default_joint_pos
-        mujoco.mj_forward(sim.model, d)
-
-    reset_robot()
+    tracker = Tracker(policy, sim, cfg.push, cfg.obs_delay_steps, cfg.seed, cfg.fade_in_s)
     viewer = None
     if cfg.viewer:
         import mujoco.viewer
@@ -359,15 +417,7 @@ def live(cfg: LiveCfg) -> dict:
         viewer.cam.trackbodyid = sim.trunk
         viewer.cam.distance, viewer.cam.elevation, viewer.cam.azimuth = 2.2, -10.0, 150.0
 
-    rng = np.random.default_rng(cfg.seed)
-    history = ObservationHistory(policy.frame_dims, policy.history_length)
-    states: deque = deque(maxlen=cfg.obs_delay_steps + 1)
-    last_action = np.zeros(policy.num_joints)
-    fade_from, fade_k0 = policy.default_joint_pos.copy(), 0
-    fade_n = round(cfg.fade_in_s * FPS)
-    next_push = rng.uniform(1.5, 4.0)
-    lateness, falls, drift, skipped = [], [], 0.0, 0
-    start_xy = sim.data.xpos[sim.trunk][:2].copy()
+    lateness, skipped = [], 0
     clock["t0"] = time.monotonic()
     if cfg.replay_session:
         threading.Thread(target=replayer, daemon=True).start()
@@ -392,33 +442,10 @@ def live(cfg: LiveCfg) -> dict:
                 continue
             lateness.append(max(0.0, -wait))
             clock["k"] = k
-            jp, jv, aq = stream.frame(k)
-            if k - fade_k0 < fade_n:  # from the standing pose into the timeline
-                w = (k - fade_k0) / fade_n
-                w = w * w * (3 - 2 * w)
-                jp, jv = (1 - w) * fade_from + w * jp, w * jv
-            states.append(measure(sim))
-            obs = history(build_observation(policy.observation_names, policy.frame_dims, states[0],
-                                            RefFrame(jp, jv, aq), last_action, policy.default_joint_pos))
-            last_action = policy.act(obs)
-            sim.data.ctrl[sim.ctrl] = policy.joint_targets(last_action)
-            for _ in range(sim.decimation):
-                physics_step(sim)
+            fell = tracker.step(k, *stream.frame(k))
             k += 1
-            t = k * dt
-            if cfg.push and t >= next_push:
-                sim.data.qvel[0:2] += rng.uniform(-0.14, 0.14, 2)
-                next_push = t + rng.uniform(1.5, 4.0)
-            d = sim.data
-            drift = max(drift, float(np.linalg.norm(d.xpos[sim.trunk][:2] - start_xy)))
-            if d.xpos[sim.trunk][2] < 0.30 or ob.quat_to_matrix(d.xquat[sim.trunk])[2, 2] < 0.5:
-                falls.append(round(t, 2))
-                print(f"[live] FELL at {t:.1f} s; standing the robot up again")
-                reset_robot()
-                history.reset()
-                states.clear()
-                last_action[:] = 0
-                fade_k0 = k
+            if fell is not None:
+                print(f"[live] FELL at {fell:.1f} s; standing the robot up again")
             if viewer is not None and time.monotonic() - target < dt:
                 viewer.sync()
     except KeyboardInterrupt:
@@ -435,7 +462,7 @@ def live(cfg: LiveCfg) -> dict:
     first_late = [p["start_late_s"] for p in first if "start_late_s" in p]
     pre = [p["pre_start_before_audio_s"] for p in first if "pre_start_before_audio_s" in p]
     summary = {
-        "seconds": k * dt, "falls": falls, "max_drift_cm": 100 * drift, "replies": len(first), "pieces": len(pieces),
+        "seconds": k * dt, "falls": tracker.falls, "max_drift_cm": 100 * tracker.drift, "replies": len(first), "pieces": len(pieces),
         "pieces_without_motion": sum(not p["motion"] for p in pieces),
         "later_pieces_ready_before_audio_s": {"min": min(later), "median": float(np.median(later))} if later else None,
         "later_pieces_under_lead": sum(x < LEAD_S for x in later),
@@ -446,10 +473,14 @@ def live(cfg: LiveCfg) -> dict:
         "plans_too_late": stats["late_plans"], "frames_without_reference": stream.starved, "foot_lock_unreachable": stream.lock_fails,
         "loop_late_ms": {"median": 1000 * float(np.median(late)), "p99": 1000 * float(np.percentile(late, 99)), "max": 1000 * float(late.max())},
         "frames_skipped": skipped, "pre_start": cfg.pre_start, "push": cfg.push, "obs_delay_steps": cfg.obs_delay_steps,
+        "seed": cfg.seed, "fade_in_s": cfg.fade_in_s, "task": cfg.task, "policy": str(policy.path),
+        "t0_monotonic": clock["t0"], "replay": bool(cfg.replay_session),
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
-    np.savez(out / "timeline.npz", **stream.snapshot(k))
-    print(f"[live] {summary['seconds']:.0f} s, {len(first)} replies, {len(pieces)} pieces | falls {len(falls)}, "
+    # Everything the tracker read, in order: `gesture live-video` runs it again to film this run.
+    np.savez(out / "timeline.npz", **stream.snapshot(k), t0_monotonic=clock["t0"], steps=k,
+             final_qpos=sim.data.qpos.copy())
+    print(f"[live] {summary['seconds']:.0f} s, {len(first)} replies, {len(pieces)} pieces | falls {len(tracker.falls)}, "
           f"max drift {summary['max_drift_cm']:.1f} cm | loop late p99 {summary['loop_late_ms']['p99']:.1f} ms")
     if later:
         print(f"[live] pieces after the first: motion ready {np.median(later):.2f} s before its audio (median; min {min(later):.2f}; "

@@ -2,14 +2,15 @@
 # Standard live test (notes/live_test_script.md): gesture service + speech loop + video, one command.
 #
 #   tools/live_test.sh            # the K1 gestures live in a MuJoCo window while you talk (step 7);
-#                                 # press Ctrl-C when done; the conversation video is made afterwards
+#                                 # press Ctrl-C when done; then a video of exactly what it did live
+#                                 # is made (gesture live-video), with your voice and its replies
 #   tools/live_test.sh --no-video # skip the video (still checks the motion)
 #   tools/live_test.sh --offline  # step 6's way: no window, motion made after each reply
 #   DRY_RUN=1 tools/live_test.sh --no-video   # test the script itself on the last recorded session
 #
 # Starts `gesture live` (or `gesture serve`) in the background, waits until it answers, runs the
 # hands-free speech loop in this terminal, and when you stop it (Ctrl-C) stops the service, prints
-# the live timing summary, and replays the new session as a video.
+# the live timing summary, and films the run (live) or replays the session as a video (--offline).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
@@ -69,9 +70,16 @@ if [[ "$MODE" == "live" ]]; then
 fi
 
 SESSION=${SESSION%/}
+if [[ "$MODE" == "live" ]]; then
+  RUN=$(grep -oE "logs/gesture/live/[0-9_-]+" "$LOG" | tail -1)
+  if [[ -n "$VIDEO_FLAG" || -z "$RUN" ]]; then exit 0; fi
+  echo
+  echo "filming what the robot did live ($RUN, ~1 min per 90 s of conversation)..."
+  uv run gesture live-video --run "$RUN" 2>&1 | grep -E "^\[live-video\]|Error"
+  exit 0
+fi
 echo
 echo "making the conversation video for $SESSION..."
-[[ "$MODE" == "live" ]] && echo "(made again offline from the recording: its gestures differ from the ones you just saw live)"
 uv run gesture replay --session "$SESSION" $VIDEO_FLAG 2>&1 | grep -E "^\[conversation\]|^\[generate\]|^\[render\]|^conv_|WARNING|Error" \
   | sed 's/features.*foot lock/foot lock/'
 OUT="$REPO/logs/gesture/conversations/conv_$(basename "$SESSION")"
