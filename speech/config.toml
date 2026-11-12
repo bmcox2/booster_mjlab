@@ -61,7 +61,7 @@ sentence_pause_ms = 300      # pause between pieces after . ! ? (Kokoro's own pa
 clause_pause_ms = 150        # pause after , ; :
 
 [tts]
-engine = "kokoro"            # "kokoro" (CPU, free) | "orpheus" (Groq) | "elevenlabs" | "cartesia" (speech/src/speech/tts.py)
+engine = "orpheus"           # "kokoro" (CPU, free) | "orpheus" (Groq) | "elevenlabs" | "cartesia" (speech/src/speech/tts.py)
 fallback = "kokoro"          # voices a piece when the cloud engine fails or hits a rate limit; "" = none
 # Kokoro settings (also used by the fallback):
 voice = "bm_daniel"          # British male; picked 2026-11-08 from `uv run python -m speech.voices`
@@ -72,7 +72,7 @@ cpu_threads = 4              # fastest on this laptop's CPU (notes/speech_bench.
 [tts.orpheus]                # Groq, same key as the LLM. Free tier: 100 requests/day, 1,200 characters/min
 api_key_env = "GROQ_API_KEY"
 model = "canopylabs/orpheus-v1-english"
-voice = "daniel"             # male: austin, daniel, troy; female: autumn, diana, hannah
+voice = "troy"               # male: austin, daniel, troy; female: autumn, diana, hannah
 timeout_s = 3.0
 
 [tts.elevenlabs]             # https://elevenlabs.io: free account, API key in speech/.env
