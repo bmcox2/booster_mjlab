@@ -22,7 +22,14 @@ class TrackingPolicy:
 
     def __init__(self, onnx_path: str | Path):
         self.path = Path(onnx_path)
-        self.session = ort.InferenceSession(str(self.path), providers=["CPUExecutionProvider"])
+        # One thread, no busy-waiting: the network takes ~0.1 ms, and onnxruntime's default (a thread per
+        # core that spins between calls) burned 350% CPU at 50 Hz, slowing Kokoro next to `gesture live`
+        # (2026-11-11). Same reason on the robot's onboard CPU.
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        self.session = ort.InferenceSession(str(self.path), opts, providers=["CPUExecutionProvider"])
         md = self.session.get_modelmeta().custom_metadata_map
         missing = {"joint_names", "observation_names", "observation_dims", "control_dt"} - md.keys()
         if missing:

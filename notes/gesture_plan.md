@@ -303,7 +303,7 @@ turns a session into a dubbed video. Choosing takes 20–40 ms; foot lock (~0.1 
 (~0.15–0.25 s, largely redundant after foot lock) are the runtime parts to trim before streaming.
 Live test 2026-11-11 (`tools/live_test.sh`, standard script): all 10 turns got motion, Boston: "looks natural". **Step 6 done.**
 
-## Step 7. Streaming: motion live, ready before its audio (built 2026-11-11; live mic test pending)
+## Step 7. Streaming: motion live, ready before its audio (done 2026-11-11; response time to re-check)
 
 **Why:** today motion is made after the robot has finished speaking (step 6). A robot needs each
 reply's motion *before* the matching audio plays, and the hands lead the voice by 0.44 s. Doing it
@@ -353,8 +353,10 @@ response time not worse than 1.47 s median (first live test).
 - Measured by re-sending the first live test's session with its recorded timing (`--replay-session`):
   pieces after the first ready 1.22 s median before their audio, all started on time (within 0.04 s);
   0 falls with pushes + 40 ms delay; control loop never late (max 0.7 ms).
-- **Left for exit:** the standard live test with the microphone (`tools/live_test.sh`): does it look in
-  sync, and is the response time still ≤ 1.47 s median with the sim running next to Kokoro.
+- **Live test with the mic (2026-11-11, session `2026-11-11_22-12-58`):** all 20 pieces on time (later pieces
+  1.33 s median before their audio, min 0.71), pre-start 0.67 s before the first piece, 0 falls; Boston:
+  nothing glaring. Response 1.59 s median vs 1.47 (Kokoro slower next to the sim; onnxruntime's spinning
+  thread pool, 350% CPU, fixed since: `gesture live` 7-24% CPU). Re-check on the next live test.
 - Not built: barge-in cancel (task 5), a video of the live motion itself (the after-video is made again
   offline), keeping the pre-start unit to its end instead of cutting into it (try if starts look twitchy).
 
