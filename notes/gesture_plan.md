@@ -60,7 +60,11 @@ library (built once): every Tier A training clip → its audio span + the same f
 
 ## Step 0. EMAGE smoke test (1 day, timebox it)
 
-**Why first:** you've never seen *generated* gesture motion on the K1. One day with EMAGE shows
+**Deferred 2026-11-11: start at step 1.** Retrieval doesn't depend on this, and steps 3–4 test the
+tracker on retrieval's own output. Step 2 holds the riskier question (does audio predict motion?).
+Run this later as a third comparison in step 5, or before starting a neural generator.
+
+**Why it's useful (when you get to it):** you've never seen *generated* gesture motion on the K1. One day with EMAGE shows
 what a neural generator's output looks like, what breaks in the tracker, and gives a reference
 point for judging retrieval later. It's the roadmap's step 2.
 
@@ -102,6 +106,11 @@ too.
 **Exit criteria:** audio on disk for the subset; measured audio–motion lag (expect within ~1–2
 frames); a plot of loudness vs hand speed for 3 clips.
 
+**Result (2026-11-11, `tools/gesture_sync_check.py`, then `gesture/sync.py`):** audio is in sync
+for nearly all takes. Use jaw opening *speed*, not jaw angle: the angle check first flagged all of
+Miranda's session 0 (it opens to breathe before phrases); the speed check keeps 298/310 takes and
+drops 12 (Miranda 10, Wayne 2). Hands lead loudness by ~0.4 s (natural). Details in `log.md`.
+
 **Learn:** audio as a 1-D array of samples; sample rate; frames and hops (one feature value per
 20 ms window = 50 Hz, matching the motion); cross-correlation.
 
@@ -120,7 +129,9 @@ frames); a plot of loudness vs hand speed for 3 clips.
    hand distance from the trunk, plus the start and end pose of each unit (joint angles).
 3. **Units:** cut each library clip at local minima of total hand speed, keeping units 0.5–3 s.
    Each unit stores: source clip, frame range, audio features, motion features, start/end pose.
-4. Build the library file once (`uv run gesture build-library`) and cache it.
+4. Build the library file once (`uv run gesture build-library`) and cache it. **Gate each take on
+   the jaw check** (`gesture/sync.py`): jaw opening *speed* (from `poses[:, 66:69]` in the BEAT2
+   SMPL-X file) vs loudness must peak within ±0.2 s.
 5. **Does audio predict motion at all?** Correlate loudness and onset rate with hand speed across
    the library. If the correlation is near zero, matching on these features is pointless and you
    need better features (pitch, word stress) before step 3. This is the most important number of
@@ -129,6 +140,14 @@ frames); a plot of loudness vs hand speed for 3 clips.
 **Exit criteria:** library stats (number of units, length histogram, units per speaker); the
 correlation table; 5 random units watched in `visualize-motions` to confirm they look like
 whole gestures.
+
+**Result (2026-11-11, `uv run gesture analyze`; full numbers in `log.md`):** library v0 = 2,487
+clips, 7.8 h, 20,514 units (median 1.26 s, cut where the hands at least halve their speed).
+Audio predicts hand activity **weakly but really**: r 0.21 on unseen takes, 0.19 on an unseen
+speaker, 0.15 for nearest-neighbour retrieval, 0.13 for units (shuffled baselines ~0.00 ± 0.03).
+Pauses are the clearest signal (hands 0.6 sd calmer); onsets and peak loudness carry the rest;
+pitch adds nothing. Strong accents are ~1.2× more likely at a stroke's end than at random.
+Units rendered for watching: `logs/gesture/units/*_audio.mp4`.
 
 **Learn:** short-time Fourier transform (the spectrogram); RMS and decibels; spectral flux;
 gesture phases; why per-speaker normalization matters (some people are always louder).
@@ -145,21 +164,26 @@ relative to the trunk, not the world.
 1. **Split the reply** into segments of about one unit length, at pauses and word boundaries
    (`tts.json` has word times).
 2. **Cost per candidate:** distance between the segment's audio features and the unit's audio
-   features (after z-scoring), and a length mismatch penalty.
+   features (after z-scoring), and a length mismatch penalty. Per step 2: use onset mean, peak
+   and mean loudness, speech fraction (not pitch), with the unit's audio taken 0.44 s after its
+   motion (the hands lead).
 3. **Transition cost:** distance between the end pose of unit i and the start pose of unit i+1:
    arm joints, hand positions, and **foot positions relative to the trunk** (different stances
    make the feet slide during a crossfade).
 4. **Search:** keep the best ~20 candidates per segment, then dynamic programming over the whole
    reply for the cheapest sequence. Penalize reusing a unit within 30 s.
-5. **Time-fit:** stretch or squeeze each unit by up to ±15% to fill its segment (resample frames).
-6. **Stitch** in GMR `.pkl` space (`root_pos`, `root_rot`, `dof_pos` at 30 fps): crossfade joints
+5. **Time-fit:** stretch or squeeze each unit by up to ±15% to fill its segment (resample frames),
+   choosing the stretch that puts the unit's stroke ends nearest the reply's strong accents (step 2:
+   audio matching alone gets timing only slightly better than chance).
+6. **Pauses:** in the reply's pauses, prefer low-motion units (step 2's clearest signal).
+7. **Stitch** in GMR `.pkl` space (`root_pos`, `root_rot`, `dof_pos` at 30 fps): crossfade joints
    over ~0.3 s, interpolate trunk rotation with slerp (quaternion interpolation), rotate each unit
    so its heading continues from the previous one, and keep the root position continuous.
-7. **Clean up:** run `ground_clip` (replants feet with leg IK) → convert to the 50 Hz `.npz`
+8. **Clean up:** run `ground_clip` (replants feet with leg IK) → convert to the 50 Hz `.npz`
    (`upload_motion`'s `convert_batched`, which also runs forward kinematics for body positions) →
    `clip_qc.py` Gate 1 checks.
-8. **Check in sim:** `sim2sim` from standing with `--video`, the reply's audio dubbed on.
-9. **Fixed-legs comparison:** the same replies with the legs (and so the trunk) held at a standing
+9. **Check in sim:** `sim2sim` from standing with `--video`, the reply's audio dubbed on.
+10. **Fixed-legs comparison:** the same replies with the legs (and so the trunk) held at a standing
    pose, and only arms and head from the units. Watch both; decide the lower-body rule.
 
 **Exit criteria:** 5 replies from `speech/runs/` → dubbed videos; 0 severe Gate 1 flags; 0 falls in
@@ -179,6 +203,15 @@ of two values inside it stays inside) but not for collisions (arms can pass thro
   of it; Gate 1's foot checks catch the rest.
 - Matching always picks the same few "average" units: the reuse penalty and a little randomness
   among near-equal candidates fix it.
+
+**Result (2026-11-11, `uv run gesture generate | render | check`; details in `log.md`):** 5 real
+replies + random baselines. 0 severe Gate 1 flags, 0 falls in 60 sim runs (incl. pushes + 40 ms
+delay), feet fixed, no seam faster than the reply's other motion, matching < 100 ms. Matched
+replies hit 84% of strong accents with a stroke end (chance 26%; random 37%) and move like the
+library (0.38 vs 0.40 m/s). Changes from the plan above: **foot lock** (one stance per reply, legs by
+IK; replaces the whole-body vs fixed-legs choice), trunk-twist and speaker terms in the transition
+cost, crossfades lengthened per seam (no joint > 2 rad/s), and an intensity target from the audio
+neighbours (without it the search drifted to calm units).
 
 ## Step 4. Idle, start and end, continuous runs (2–3 sessions)
 
@@ -213,9 +246,11 @@ neural generator.
 
 **Tasks**
 1. **Test audio:** held-out speakers' audio (never in the library) + 10 TTS replies.
-2. **Three versions per test audio:** retrieval; **random** retrieval (same units and stitching,
+2. **Three versions per test audio** (plus the context-rate versions once the context layer exists,
+   see step 7: no / sparse / dense context gestures): retrieval; **random** retrieval (same units and stitching,
    audio ignored); and for held-out clips, the **real mocap** of that speaker on the K1
-   (`heldout-val` file) as the upper bound.
+   (`heldout-val` file) as the upper bound. Optional fourth: **EMAGE** (step 0, deferred here),
+   to see whether a neural model beats retrieval.
 3. **Beat consistency (BC):** how often motion "beats" (moments the hands stop or change direction)
    fall near audio onsets. Used in the BEAT and EMAGE papers (arXiv 2401.00374); check their exact
    definition before comparing your numbers with theirs.
@@ -255,9 +290,28 @@ silence at the start; use `tts.json`'s word times, which already include it).
 
 - **Streaming:** when speech step 4 streams TTS sentence by sentence, run the search per sentence,
   with the previous sentence's last unit fixed. Retrieval needs no future audio beyond the sentence.
-- **Semantic gestures:** LLM inline tags (`[wave]`, `[point_at:left]`, `speech_plan.md` step 6)
-  insert a unit from the AMASS gesture clips at the tagged word, with the same transition cost.
-  BEAT2's TextGrid word alignments would allow matching on words too.
+- **Context layer (semantic gestures + emphasis)**: design agreed 2026-11-11, after watching step 3
+  (`log.md`: beats-only already reads as natural; what's missing is gestures that follow the words).
+  Build after steps 4–5.
+  - **Principle: sparse, on top of the beats, never instead of them.** People make meaning-carrying
+    gestures only occasionally; most hand motion is beats. A missing context gesture looks fine, a
+    wrong or excessive one looks robotic (a mime acting out every noun). When unsure, add nothing.
+  - **Emphasis first (cheapest win):** the LLM marks the key phrase (`[emph]...[/emph]`); the generator
+    raises that segment's intensity target and prefers units with a stroke on its strong accent. Fixes
+    "could have gestured harder on the punch line" with machinery that already exists.
+  - **Then a small closed vocabulary**, inline tags aligned to words with TTS word timings
+    (`speech_plan.md` step 6): `point` (listener / self / left / right), a few named gestures (wave,
+    "this big", shrug). The LLM only decides *whether* and *which*; it never produces motion. Each
+    tag inserts a library unit at the tagged word, joined with the usual transition cost. Pointing and
+    emphasis suit the K1; shape-drawing (iconic) gestures won't read without wrists or hands.
+  - **Rate is a parameter**, e.g. at most one context gesture per sentence and only for phrases that
+    clearly call for one, plus a cooldown so the same gesture doesn't repeat back to back.
+  - **Starting rate from data:** check whether BEAT2 kept BEAT's semantic gesture annotations; if
+    not, count meaning-carrying gestures by hand in ~20 clips.
+  - **Final rate from viewers:** step 5's blind test with three versions of the same replies (no
+    context gestures / sparse / dense); pick the rate where "natural" peaks.
+  - Gesture sources: AMASS waves and points (kept for this), BEAT2 clips found via TextGrid word
+    alignments, phone video -> GVHMR -> GMR for missing ones (e.g. self-pointing).
 - **Listening behaviour:** small nods and gaze toward the speaker while the user talks.
 - **Neural generator (paper angle):** a K1-native model trained on the library itself (audio →
   K1 joints, ~23 h). Retrieval is its baseline (step 5 set-up). Only if retrieval looks repetitive.

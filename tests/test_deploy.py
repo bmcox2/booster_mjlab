@@ -13,7 +13,7 @@ import pytest
 import torch
 
 import booster_mjlab.tasks  # noqa: F401
-from booster_mjlab.deploy import RefFrame, Reference, RobotState, build_observation
+from booster_mjlab.deploy import ObservationHistory, RefFrame, Reference, RobotState, build_observation
 from booster_mjlab.deploy import observation as ob
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
@@ -58,6 +58,61 @@ def test_observation_matches_mjlab(env):
             ref = RefFrame(cmd.joint_pos[i].numpy(), cmd.joint_vel[i].numpy(), cmd.anchor_quat_w[i].numpy())
             got = build_observation(names, dims, state, ref, env.action_manager.action[i].numpy(), default)
             np.testing.assert_allclose(got, expected[i].numpy(), atol=1e-5, err_msg=f"env {i}")
+
+
+def _frame(env, i, names, dims):
+    """One-frame observation for env i, from its current state, built by the deploy code."""
+    robot = env.scene["robot"]
+    cmd = env.command_manager.get_term("motion")
+    state = RobotState(
+        joint_pos=robot.data.joint_pos_biased[i].numpy(),
+        joint_vel=robot.data.joint_vel[i].numpy(),
+        trunk_quat=robot.data.root_link_quat_w[i].numpy(),
+        gyro=env.scene["robot/imu_ang_vel"].data[i].numpy() if "robot/imu_ang_vel" in env.scene.sensors
+        else robot.data.root_link_ang_vel_b[i].numpy(),
+    )
+    ref = RefFrame(cmd.joint_pos[i].numpy(), cmd.joint_vel[i].numpy(), cmd.anchor_quat_w[i].numpy())
+    return build_observation(names, dims, state, ref, env.action_manager.action[i].numpy(),
+                             robot.data.default_joint_pos[i].numpy())
+
+
+def test_observation_history_matches_mjlab():
+    """ObservationHistory stacks frames in mjlab's order, including the backfill after a reset."""
+    H = 10
+    cfg = load_env_cfg(TASK + "-History10", play=True)
+    assert cfg.observations["actor"].history_length == H
+    cfg.scene.num_envs = 3
+    cfg.commands["motion"].motion_file = str(MOTION)
+    cfg.commands["motion"].sampling_mode = "uniform"
+    env = ManagerBasedRlEnv(cfg=cfg, device="cpu")
+    try:
+        env.reset()
+        obs_mgr = env.observation_manager
+        names = obs_mgr.active_terms["actor"]
+        dims = [int(np.prod(d)) for d in obs_mgr.group_obs_term_dim["actor"]]
+        frame_dims = [d // H for d in dims]
+        assert sum(frame_dims) == 122
+        hist = [ObservationHistory(frame_dims, H) for _ in range(env.num_envs)]
+        for i in range(env.num_envs):
+            hist[i](_frame(env, i, names, frame_dims))
+        torch.manual_seed(0)
+        resets = 0
+        for step in range(H + 5):  # more steps than H, so the oldest slots roll out
+            if step == 7:  # reset one env mid-way: its history must be backfilled again
+                env.reset(env_ids=torch.tensor([1]))
+                hist[1].reset()
+                hist[1](_frame(env, 1, names, frame_dims))
+                resets += 1
+            env.step(0.1 * torch.randn(env.num_envs, env.action_manager.total_action_dim))
+            expected = obs_mgr.compute_group("actor")
+            for i in range(env.num_envs):
+                if env.episode_length_buf[i] == 0:  # terminated and reset inside step()
+                    hist[i].reset()
+                got = hist[i](_frame(env, i, names, frame_dims))
+                np.testing.assert_allclose(got, expected[i].numpy(), atol=1e-5, err_msg=f"step {step}, env {i}")
+        assert resets == 1
+    finally:
+        env.close()
 
 
 def test_reference_lead_in_and_alignment():

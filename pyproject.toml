@@ -27,6 +27,7 @@ motions-to-hf = "booster_mjlab.scripts.motions_to_hf:main"
 export-web-demo = "booster_mjlab.scripts.export_web_demo:main"
 export-tracking-policy = "booster_mjlab.scripts.export_tracking_policy:main"
 sim2sim = "booster_mjlab.scripts.sim2sim:main"
+gesture = "booster_mjlab.gesture.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.5,<0.10.0"]

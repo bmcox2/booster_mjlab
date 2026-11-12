@@ -7,7 +7,8 @@ Only numpy and onnxruntime, so the same code can run on the K1's onboard compute
   action scale, observation layout, control period.
 - ``observation.build_observation``: the policy's observation vector from what a robot measures
   (joint encoders, IMU orientation and gyro) plus the current reference frame, matching mjlab's
-  terms exactly.
+  terms exactly. For a policy trained with observation history, ``observation.ObservationHistory``
+  stacks those one-frame vectors (built with ``TrackingPolicy.frame_dims``) in mjlab's order.
 - ``reference.Reference``: a reference clip played at the control rate, with a lead-in from the
   robot's standing pose, a hold at the end, and its heading aligned to the robot's.
 
@@ -15,8 +16,8 @@ A backend (``scripts/sim2sim.py`` now; a Booster SDK one later) supplies ``Robot
 step and applies the joint targets with the policy's PD gains. notes/demo_plan.md.
 """
 
-from booster_mjlab.deploy.observation import RobotState, build_observation
+from booster_mjlab.deploy.observation import ObservationHistory, RobotState, build_observation
 from booster_mjlab.deploy.policy import TrackingPolicy
 from booster_mjlab.deploy.reference import RefFrame, Reference
 
-__all__ = ("RefFrame", "Reference", "RobotState", "TrackingPolicy", "build_observation")
+__all__ = ("ObservationHistory", "RefFrame", "Reference", "RobotState", "TrackingPolicy", "build_observation")

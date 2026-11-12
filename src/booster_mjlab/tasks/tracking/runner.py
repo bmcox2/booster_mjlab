@@ -43,7 +43,9 @@ def deploy_metadata(env: ManagerBasedRlEnv, run_path: str) -> dict[str, list | s
     period, and the tracking reference settings."""
     md = get_base_metadata(env, run_path)
     obs = env.observation_manager
+    # Sizes as the network sees them: with history, each term holds history_length frames.
     md["observation_dims"] = [int(math.prod(d)) for d in obs.group_obs_term_dim["actor"]]
+    md["observation_history_length"] = float(obs.cfg["actor"].history_length or 0)
     md["control_dt"] = float(env.step_dt)
     cmd = env.command_manager.get_term("motion")
     md["anchor_body_name"] = cmd.cfg.anchor_body_name

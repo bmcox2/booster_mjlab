@@ -29,7 +29,7 @@ import numpy as np
 import tyro
 
 import booster_mjlab.tasks  # noqa: F401, ensure task registry is populated.
-from booster_mjlab.deploy import Reference, RobotState, TrackingPolicy, build_observation
+from booster_mjlab.deploy import ObservationHistory, Reference, RobotState, TrackingPolicy, build_observation
 from booster_mjlab.deploy import observation as ob
 from booster_mjlab.robots.booster_k1.k1_constants import HOME_KEYFRAME, K1_XML
 from booster_mjlab.scripts.export_web_demo import (
@@ -213,6 +213,7 @@ def run_once(cfg: Config, policy: TrackingPolicy, sim: Sim, clip: Reference, see
     sim_hands = [next(b for b in range(sim.model.nbody) if sim.model.body(b).name.split("/")[-1] == h) for h in HANDS]
 
     last_action = np.zeros(policy.num_joints)
+    history = ObservationHistory(policy.frame_dims, policy.history_length)
     states: deque[RobotState] = deque(maxlen=cfg.obs_delay_steps + 1)
     next_push = rng.uniform(1.5, 4.0)
     hand_err, fell_at = [], None
@@ -226,8 +227,8 @@ def run_once(cfg: Config, policy: TrackingPolicy, sim: Sim, clip: Reference, see
             R = ob.quat_to_matrix(d.xquat[sim.trunk])
             priv = {"motion_anchor_pos_b": R.T @ (ref.body_pos[min(k, len(ref) - 1), 0] - d.xpos[sim.trunk]),
                     "base_lin_vel": d.sensordata[sim.linvel].copy()}
-        obs = build_observation(policy.observation_names, policy.observation_dims, state, ref.frame(k),
-                                last_action, policy.default_joint_pos, priv)
+        obs = history(build_observation(policy.observation_names, policy.frame_dims, state, ref.frame(k),
+                                        last_action, policy.default_joint_pos, priv))
         action = policy.act(obs)
         last_action = action
         sim.data.ctrl[sim.ctrl] = policy.joint_targets(action)

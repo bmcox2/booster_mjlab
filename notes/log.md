@@ -1071,8 +1071,80 @@ Analysis only: no code changed, nothing trained. Reviewed the repo notes and rec
 
 **Left for when speech resumes:** barge-in (step 5: you keep talking, the robot stops; also the real fix for pauses > 1 s after a complete sentence), a less robotic voice (Orpheus / ElevenLabs / Cartesia, or GPU Kokoro), < 1 s needs faster first audio than Kokoro on CPU (0.65–1.1 s), Pipecat spike (not done)
 
+## 2026-11-11: gesture step 2 (features, units, library, does audio predict motion?)
+
+**Built** (`src/booster_mjlab/gesture/`, CLI `uv run gesture build-library | report | analyze`, tests `tests/test_gesture.py`)
+- `audio.py`: speech features at 50 fps, each window centered on its motion frame: loudness (RMS dB, 40 ms), onset strength (spectral flux on 40 log bands), voicing + pitch (autocorrelation with window correction, Boersma 1993; shortest-period peak within 90% of the best, to avoid octave errors), speech/pause. Pitch checked against librosa pYIN (installed temporarily with `uv run --with librosa`, not a dependency) on 30 s of Wayne, Lawrence, Miranda (both sessions) and Kokoro: medians within 2–4%, 84–90% of frames within 1 semitone, octave errors 0–3.5%, voicing agreement 77–91%
+- `motion.py`: hand speed + position in the **trunk frame**; `cut_units`: cut where the hands pause (dip ≥ 0.1 m/s and at least halving the speed), 0.5–3 s
+- `sync.py`: per-take jaw gate (jaw opening **speed** vs loudness, |lag| ≤ 0.2 s)
+- `library.py`: per-take features cached in `~/robotics/data/gesture/features/v1/`; library `~/robotics/data/gesture/library_v0.npz` (build 25 s, rebuild 4 s)
+- `analysis.py`: the predictability report (`logs/gesture/analysis_v0.json` / `.png`)
+- Tests: 7 synthetic-signal tests (frame centering, +20 dB for 10× amplitude, pitch 90–330 Hz within 2% and noise unvoiced, onsets within 1 frame, pauses, unit cuts); full suite 25 passed
+
+**Library v0:** Wayne, Lawrence, Miranda; 310 takes, 12 fail the jaw gate (Miranda 10 at −0.27 to −0.80 s, Wayne 2) → **2,487 clips, 7.77 h, 20,514 units** (median 1.26 s)
+- Unit rule: cutting at every speed minimum gave 31,953 units (median 0.82 s) with cuts in mid-movement (p90 0.45 m/s) and on noise while still. The dip rule: median 1.26 s, cuts at median 0.10 / p90 0.34 m/s (`logs/gesture/units_v0.png` vs `units_v1.png`)
+- 5 random units rendered with their audio: `logs/gesture/units/*_audio.mp4` (sim2sim `y1r48dhc`, 0 falls); not watched yet
+
+**Does audio predict hand motion?** (`uv run gesture analyze`, 2.5 min; target = mean hand speed z-scored per take; baselines = same model on shuffled labels)
+
+| test | r held out | shuffled |
+|---|---|---|
+| 1 s windows, unseen takes (ridge) | 0.21 | 0.00 ± 0.03 |
+| 1 s windows, unseen speaker (ridge) | 0.19 (Wayne 0.20, Lawrence 0.28, Miranda 0.16) | 0.01 ± 0.05 |
+| 1 s windows, unseen speaker, nearest neighbours (retrieval) | 0.15 | 0.00 ± 0.01 |
+| units, unseen speaker, nearest neighbours | 0.13 | 0.00 ± 0.01 |
+
+- **Real but weak**: consistent across speakers and to an unseen voice, ~4% of the variation. 2 s windows no better than 1 s
+- Hands lead the audio: best lag −0.44 s (loudness r 0.12, onset 0.10, speech 0.11, pitch 0.03). Miranda's lag is shorter (−0.16 s) than Wayne/Lawrence (~−0.5 s)
+- Useful features: onset (rhythm) and peak loudness (ridge weights 0.18, 0.14). **Pitch adds nothing**: its −0.15 was a voicing confound (partial r 0.02)
+- **Pauses are the clearest signal**: mostly-pause windows −0.49 sd hand activity vs +0.10 during speech
+- **Timing:** strong accents (loudness ≥ 2 sd above surroundings) are 1.16–1.25× more likely near a stroke's **end** (hand arriving, ~−0.1 s) than at random; looser accents or the speed peak give ~1.1×
+
+**Implications for step 3** (`gesture_plan.md`)
+- Retrieval should beat random clearly in *when* the hands rest (pauses) and modestly in *how much* they move; don't expect audio matching alone to make gestures fit the words
+- Match on onset_mean, loud_max, loud_mean, speech_frac (drop pitch); shift motion −0.44 s
+- Add an explicit timing term: time-fit units so stroke ends land on strong accents
+- The step 5 viewer test (retrieval vs random) decides whether this is enough; words/semantics (BEAT2 TextGrids, LLM tags) are the likely next lever
+
+## 2026-11-11: gesture step 3 (matching + stitching): TTS reply -> K1 reference
+
+**Built** (`src/booster_mjlab/gesture/generate.py`; CLI `uv run gesture generate | render | check`)
+- `generate --reply speech/runs/<session>/turn_NN [--random-baseline]` -> `logs/gesture/replies/<session>_<turn>/`: `reference.npz` (combined layout, 50 fps), `motion.pkl` / `motion_grounded.pkl`, `reply.wav`, `plan.json` (segments, units, costs, crossfades, QC, timings)
+- Pipeline: reply features (`analysis.recording_features`, same normalization as the library; test added) -> segments at word starts / pauses (~1.3 s) -> per-segment candidates (audio match on onset/peak/mean loudness/speech share; stretch <= 15%; intensity target = activity of the 50 most similar-sounding units; calm units only in mostly-pause segments; reply accents vs the unit's stroke ends) -> Viterbi with transition cost (joints, legs x2, hands, trunk twist relative to the feet, speaker switch) -> stitch the source GMR pkls at 30 fps (time-stretch, heading/position continuity, crossfade using frames past each cut) -> **foot lock** -> `ground_clip` -> `clip_qc` -> `convert_batched`
+- `render --dir <ref> [--push --obs-delay-steps 2 --runs 5 --no-video]`: `sim2sim` from standing (`y1r48dhc`, 2 s blend + 1 s hold), reply audio dubbed with delay 3 s + 0.44 s -> `sim_audio.mp4`
+- `check --dirs logs/gesture/replies/*`: seams, feet travel, Gate 1, hand speed, accent hits vs chance, pause vs talk
+- Speed: features 13–32 ms, search 4–16 ms, stitch 3–36 ms per reply (< 100 ms); foot lock 0.1–0.2 s; library index load 2.8 s once
+
+**Problems found and fixed (in order)**
+- Feet slid 17–20 cm per reply (every unit brings its own stance; Gate 1 "K1 feet move 11 cm") -> **foot lock**: one stance per reply, trunk pose kept relative to the feet, legs by IK
+- Foot-lock IK diverged on one reply (2.5 m miss -> joint jump -> fall): `Grounder.solve_leg` wants position and full foot orientation; with the trunk twisted against locked feet the hip hit its limit -> own IK with exact position, level sole, soft foot angle, hold the previous legs if unreachable
+- A knee flicked at 3.2 rad/s where two units twist the trunk 16° differently relative to the feet -> stance smoothed over 0.8 s in the foot lock + twist term in the transition cost (library now stores per-frame `twist`; trunk vs feet within about ±25° for 90% of frames)
+- Forearm spun at 5.5 rad/s at a seam (hands alike, elbow yaw 0.8 rad apart) -> crossfade length per seam so no joint exceeds 2 rad/s (0.3–1.0 s)
+- **Replies were subdued** (chosen units −0.70 sd activity): the pause term leaked into speech (`(1 − speech share) × activity`), and units that fit ~1.3 s segments are calmer (short units are quick beats: 0.5–0.8 s +0.34 sd, 2.5–3 s −0.40) -> pause term only below 50% speech + intensity target from audio neighbours -> −0.07 sd; shorter segments not needed
+- Mixed speakers within a reply (Lawrence then Miranda) -> speaker-switch cost
+
+**Results** (5 real speech-loop replies, 5.6–13.2 s, + random baselines; `gesture check`)
+
+| | matched | random (audio ignored) |
+|---|---|---|
+| Strong accents with a stroke end within 0.14 s | **16/19 (84%)**, chance 26% | 7/19 (37%), chance 21% |
+| Hand speed | 0.38 m/s (library 0.40) | 0.30 m/s |
+| Worst seam | 3.7 rad/s (not above that reply's other motion) | 5.8 rad/s |
+| Feet travel | ≤ 0.1 cm | 0 |
+| Gate 1 severe | 0 (1 mild: elbow bend at limit 24%) | 0 |
+| sim2sim from standing | 5/5, + pushes & 40 ms delay 25/25, hands 2.0–4.5 cm | 5/5, 25/25 |
+
+- The timing number is the term the search optimizes, so it shows the mechanism works, not that it looks natural (step 5 decides)
+- Pauses: Kokoro replies barely pause (0.3–1.3 s each), so the pause effect can't be judged here; long pauses are step 4 (idle)
+- Lower-body rule: **foot lock** (feet fixed, trunk keeps its sway and lean) replaces the plan's "whole body vs fixed legs" choice; a rigid-trunk version wasn't built
+- **Watched by Boston (informal, not blind; step 5 does it properly):** matched clearly better than random on all 5 pairs
+  - Matched: "looks very natural" (11-52-04 turn 2), "pretty natural" (joke, but "could have gestured harder on the punch line"), natural "solely based on the way it spoke, not the words" (outfit explanation; could have pointed at parts of its body), "kept its hands in front and moved slightly on the beats" (16-44-29 turn 3), "really liked" 16-57-05 turn 8 ("big movements at the beginning, smaller at the end")
+  - Random: "very bad, gestures make no sense, isolated from the audio", "didn't really gesture, just stood there swinging its arms", "just stood there and twitched"; two "not glaringly bad but clearly not great"
+  - Nothing glaringly wrong against the rhythm and sound of the speech. **Missing: context**: gestures that follow the words (pointing, self-reference, emphasis on the important part)
+  - Concern raised: context matching must not over-gesture or illustrate every word
+
 ## Next
-Current step: **gesture generator** (EMAGE smoke test → retrieval generator v0), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
+Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); next: watch matched vs random videos (`logs/gesture/replies/*/sim_audio.mp4`), then `gesture_plan.md` step 4 (idle, start/end, 2- and 10-minute runs), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)
@@ -1085,9 +1157,18 @@ Current step: **gesture generator** (EMAGE smoke test → retrieval generator v0
     --agent.run-name history10-nse-train-ab 2>&1 | tee logs/train_history10.txt
   ```
   Then `eval-tracking --task Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation-History10 ...` on `heldout-val:v0` + `val:v1`, `tools/eval_summary.py` vs `y1r48dhc` (193/194, 3.82 cm; val 468/472, 4.57 cm), and `sim2sim` from standing on the 15 held-out clips. Adopt if clearly better; watch iteration time (input 1220 vs 122)
-- EMAGE smoke test on ~5 TTS WAVs from `speech/runs/` → GMR → `ground_clip` → `eval-tracking` + `sim2sim --video`; list what breaks (jitter, foot sliding, joint limits, falls)
+- ~~EMAGE smoke test~~ deferred 2026-11-11 to `gesture_plan.md` step 5 (optional extra comparison): retrieval doesn't depend on it, and step 2 holds the riskier question
 - **Thursday robot session:** dry run + `check_dry_run.py`, gantry hold; ask/test whether the SDK can drive arms + head while Booster's controller holds the legs; record the K1 mics with motors running; time laptop ↔ robot round trip; note the compute module
-- After Thursday: retrieval generator v0, plan in **`notes/gesture_plan.md`** (written 2026-11-11; steps 0 EMAGE smoke test → 1 library audio + sync check → 2 features/units → 3 matching + stitching → 4 idle/continuous → 5 evaluation vs random + real mocap → 6 speech loop hook). Start: step 1, download BEAT2 `wave16k` for 3–4 training speakers (all training takes ~9.3 GB, held-out ~2 GB)
+- After Thursday: retrieval generator v0, plan in **`notes/gesture_plan.md`** (written 2026-11-11; step 0 EMAGE smoke test deferred; 1 library audio + sync check → 2 features/units → 3 matching + stitching → 4 idle/continuous → 5 evaluation vs random + real mocap → 6 speech loop hook). Start: step 1, download BEAT2 `wave16k` for 3–4 training speakers (all training takes ~9.3 GB, held-out ~2 GB)
+  - **Done 2026-11-11:** Wayne, Lawrence, Miranda (most Tier A training hours with fair arm motion; Scott has only 0.5 h Tier A, Solomon/Sophie have data issues). `uv run hf download H-Liu1997/BEAT2 --repo-type dataset --local-dir ~/robotics/data/BEAT2 --include "beat_english_v2.0.0/wave16k/1_wayne_*.wav" ...` (one `--include` per speaker): 382 files, 1.4 GB. Every take has audio, none shorter than its motion. Library from them: **2,564 `train-a` clips, 8.0 h** (Wayne 2.3, Lawrence 2.6, Miranda 3.2). Only `train`/`additional` takes are in `train-a`; their `val`/`test` takes are extra test audio for step 5
+  - **WAVs are mixed int16 and float32**: convert to float (int16 / 32768) before any feature
+  - **Sync check done 2026-11-11** (`tools/gesture_sync_check.py`: loudness (RMS dB, 50 Hz) vs hand speed relative to the trunk, cross-correlation over ±1 s; `--dir` for exported clips, `--motion-file` for library clips). Dubbed `sim2sim --start reference` videos of 3 Scott `test` clips in `logs/sync/`: watched, nothing visibly off, looks fairly natural in short clips (naturalness judged later on full conversations, step 5). **Step 1 done**
+    - Video playback from VS Code's terminal: VS Code is a snap and its terminal passes snap GTK variables, so `xdg-open` → VLC crashes (`symbol lookup error ... /snap/core20/...libpthread`). Open from Files, use `ffplay`, or `env -u GTK_PATH -u GTK_EXE_PREFIX -u GIO_MODULE_DIR -u LOCPATH vlc <file>`
+    - 3 Scott clips alone: noise (corr 0.03–0.23, lags −0.4 to +0.3 s). Use many clips
+    - **Hands lead loudness by ~0.4 s**: Wayne + Lawrence, 400 clips, pooled peak −0.44 s (corr 0.13; 0.05 at 0 s). Their audio is in sync (jaw check below), so this is how people gesture, not an offset. Retrieval keeps it automatically (units carry their own audio), but the generator needs ≥ ~0.5 s of audio ahead of the motion it plays
+    - **Loudness alone is a weak predictor** (corr ~0.1): expected; step 2 must test onsets / pitch too
+    - Jaw check, first version (jaw **angle** vs loudness): Wayne, Lawrence, Scott −33 ms, Miranda session 1 0 ms, Miranda session 0 0.5–1.9 s off. **Corrected the same day (step 2): that Miranda result was wrong.** With jaw opening **speed** (syllable rate) her session-0 takes are in sync (median +33 ms, 84% within 67 ms); the slow jaw angle also opens to breathe in before a phrase, which fooled the first check
+    - ~~Decision: library drops Miranda session 0~~ (withdrawn). The per-take jaw-speed gate (±0.2 s) drops 12 takes instead: Miranda 10 (−0.27 to −0.80 s), Wayne 2
 
 **Robot demo** (`notes/demo_plan.md`, order in `deploy_audit.md`): normal + `--push` eval on the ranked clips (club GPU; command in the 2026-11-08 session) → bring-up: dry run + `check_dry_run.py` first, then gantry hold → clip → floor → demo with audio.
 

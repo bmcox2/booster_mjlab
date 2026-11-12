@@ -22,3 +22,13 @@ register_mjlab_task(
     rl_cfg=booster_k1_tracking_ppo_runner_cfg(),
     runner_cls=K1MotionTrackingRunner,
 )
+
+# Deployable + the last 10 policy observations (0.2 s at 50 Hz). Experiment vs the variant above
+# (notes/roadmap.md, exit criterion 8).
+register_mjlab_task(
+    task_id="Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation-History10",
+    env_cfg=booster_k1_flat_tracking_env_cfg(has_state_estimation=False, actor_history_length=10),
+    play_env_cfg=booster_k1_flat_tracking_env_cfg(play=True, has_state_estimation=False, actor_history_length=10),
+    rl_cfg=booster_k1_tracking_ppo_runner_cfg(),
+    runner_cls=K1MotionTrackingRunner,
+)

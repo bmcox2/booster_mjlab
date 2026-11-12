@@ -39,6 +39,13 @@ class TrackingPolicy:
         self.observation_names: list[str] = md["observation_names"].split(",")
         self.observation_dims: list[int] = [int(round(v)) for v in _floats(md["observation_dims"])]
         self.control_dt = float(md["control_dt"])
+        # Frames of history per term (0 = current frame only; older exports have no key).
+        self.history_length = int(round(float(md.get("observation_history_length", 0))))
+        frames = max(1, self.history_length)
+        if any(d % frames for d in self.observation_dims):
+            raise ValueError(f"observation_dims {self.observation_dims} don't divide into {frames} history frames")
+        # One frame's term sizes: what build_observation makes each step (ObservationHistory stacks them).
+        self.frame_dims: list[int] = [d // frames for d in self.observation_dims]
         self.input_name = self.session.get_inputs()[0].name
         self.obs_dim = int(self.session.get_inputs()[0].shape[-1])
         if sum(self.observation_dims) != self.obs_dim:

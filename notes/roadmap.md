@@ -87,7 +87,7 @@ Real "done" only after hardware deployment.
 | # | Step | Done when |
 |---|---|---|
 | 1 | **Hardware, canned clips** (first session Thu 2026-11-12) | Dry run passes `check_dry_run.py`; one clip on the gantry, then the floor, `/low_state` + `/joint_ctrl` recorded. Also answer: SDK arms + head while Booster's controller holds the legs? K1 mics with motors running; laptop ↔ robot round trip; compute module |
-| 2 | **Generated-motion smoke test** (~1 day) | EMAGE offline on ~5 TTS replies → GMR → `ground_clip` → `eval-tracking` + `sim2sim`; failure causes listed |
+| 2 | **Generated-motion smoke test** (~1 day; **deferred 2026-11-11** to `gesture_plan.md` step 5, as an extra comparison) | EMAGE offline on ~5 TTS replies → GMR → `ground_clip` → `eval-tracking` + `sim2sim`; failure causes listed |
 | 3 | **Retrieval generator v0 in sim** ← *main work now*; plan: `gesture_plan.md` | TTS WAV → 50 Hz K1 reference (matched BEAT2 clips, crossfades, idle, fixed legs); a `speech.loop` reply plays as a dubbed `sim2sim` video, synced within ~100 ms on stressed words; 2-minute continuous run, no fall |
 | 4 | **Final tracker run** (after 1–3) | Exit criteria rows 1–9 met in sim: history if it wins, idle + stitched clips in training, fixed lower-body option |
 | 5 | **Speech loop streaming** (`speech_plan.md` step 4; steps 1–3 done) | First audio < 1 s median on the test set |

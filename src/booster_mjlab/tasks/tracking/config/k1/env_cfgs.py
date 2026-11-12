@@ -44,6 +44,7 @@ _TRACKING_ARM_ACTION_SCALE = {
 def booster_k1_flat_tracking_env_cfg(
     play: bool = False,
     has_state_estimation: bool = True,
+    actor_history_length: int = 0,
 ) -> ManagerBasedRlEnvCfg:
     """Create Booster K1 flat terrain tracking configuration.
 
@@ -51,6 +52,11 @@ def booster_k1_flat_tracking_env_cfg(
     ``motion_anchor_pos_b`` (reference trunk position relative to the robot's, which needs the
     robot's world position) or ``base_lin_vel`` (trunk linear velocity; the IMU measures only
     acceleration and turn rate). The critic keeps both (sim only). Same as mjlab's G1 variant.
+
+    ``actor_history_length > 0`` gives the policy its last N observations instead of only the
+    current one (mjlab stacks them per term, oldest to newest). A policy without velocity sensing
+    can then infer how the trunk is moving from recent frames. arXiv 2607.19903 (mjlab, G1) found no
+    history raised base tracking errors 38-50%; N = 10 was as good as 20. The critic is unchanged.
     """
     cfg = make_tracking_env_cfg()
 
@@ -188,6 +194,9 @@ def booster_k1_flat_tracking_env_cfg(
     if not has_state_estimation:
         for name in ("motion_anchor_pos_b", "base_lin_vel"):
             del cfg.observations["actor"].terms[name]
+    if actor_history_length > 0:
+        cfg.observations["actor"].history_length = actor_history_length
+        cfg.observations["actor"].flatten_history_dim = True
 
     # Apply play mode overrides.
     if play:

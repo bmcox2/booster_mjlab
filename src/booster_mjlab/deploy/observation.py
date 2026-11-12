@@ -104,3 +104,35 @@ def build_observation(
             raise ValueError(f"observation term {name}: built {v.size} values, the policy expects {dim}")
         parts.append(v)
     return np.concatenate(parts).astype(np.float32)
+
+
+class ObservationHistory:
+    """Stacks one-frame observations (``build_observation`` with ``TrackingPolicy.frame_dims``) the
+    way mjlab's history buffers do for a policy trained with ``history_length`` H:
+
+    - per term, the last H frames, oldest to newest: [A_t-H+1 .. A_t, B_t-H+1 .. B_t, ...];
+    - the first frame after ``reset()`` fills every slot (mjlab backfills on reset).
+
+    H = 0 (no history) passes frames through unchanged. Call ``reset()`` when the policy starts.
+    """
+
+    def __init__(self, frame_dims: list[int], history_length: int):
+        self.frame_dims = list(frame_dims)
+        self.length = history_length
+        edges = np.cumsum([0, *self.frame_dims])
+        self._slices = [slice(a, b) for a, b in zip(edges[:-1], edges[1:])]
+        self._buf: np.ndarray | None = None  # (H, frame size), oldest first
+
+    def reset(self) -> None:
+        self._buf = None
+
+    def __call__(self, frame: np.ndarray) -> np.ndarray:
+        if self.length <= 0:
+            return frame
+        if frame.size != sum(self.frame_dims):
+            raise ValueError(f"frame has {frame.size} values, expected {sum(self.frame_dims)}")
+        if self._buf is None:
+            self._buf = np.repeat(frame[None], self.length, axis=0)
+        else:
+            self._buf = np.concatenate([self._buf[1:], frame[None]], axis=0)
+        return np.concatenate([self._buf[:, s].reshape(-1) for s in self._slices]).astype(np.float32)
