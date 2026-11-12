@@ -1,22 +1,32 @@
 #!/usr/bin/env bash
 # Standard live test (notes/live_test_script.md): gesture service + speech loop + video, one command.
 #
-#   tools/live_test.sh            # talk; press Ctrl-C when done; the video is made automatically
+#   tools/live_test.sh            # the K1 gestures live in a MuJoCo window while you talk (step 7);
+#                                 # press Ctrl-C when done; the conversation video is made afterwards
 #   tools/live_test.sh --no-video # skip the video (still checks the motion)
+#   tools/live_test.sh --offline  # step 6's way: no window, motion made after each reply
 #   DRY_RUN=1 tools/live_test.sh --no-video   # test the script itself on the last recorded session
 #
-# Starts `gesture serve` in the background, waits until it answers, runs the hands-free speech loop
-# in this terminal, and when you stop it (Ctrl-C) stops the service and replays the new session.
+# Starts `gesture live` (or `gesture serve`) in the background, waits until it answers, runs the
+# hands-free speech loop in this terminal, and when you stop it (Ctrl-C) stops the service, prints
+# the live timing summary, and replays the new session as a video.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
 VIDEO_FLAG=""
-[[ "${1:-}" == "--no-video" ]] && VIDEO_FLAG="--no-video"
+MODE="live"
+for arg in "$@"; do
+  case "$arg" in
+    --no-video) VIDEO_FLAG="--no-video" ;;
+    --offline) MODE="serve" ;;
+    *) echo "unknown option $arg"; exit 1 ;;
+  esac
+done
 
 mkdir -p logs
-LOG="logs/gesture_serve_$(date +%Y-%m-%d_%H-%M-%S).txt"
-echo "starting the gesture service (log: $LOG)..."
-uv run gesture serve > "$LOG" 2>&1 &
+LOG="logs/gesture_${MODE}_$(date +%Y-%m-%d_%H-%M-%S).txt"
+echo "starting the gesture service: gesture $MODE (log: $LOG)..."
+uv run gesture "$MODE" > "$LOG" 2>&1 &
 SERVE_PID=$!
 stop_service() { kill "$SERVE_PID" 2>/dev/null || true; wait "$SERVE_PID" 2>/dev/null || true; }
 trap stop_service EXIT
@@ -28,6 +38,7 @@ for _ in $(seq 1 120); do
 done
 curl -s -m 1 http://127.0.0.1:8765/health > /dev/null || { echo "gesture service not answering after 2 min"; exit 1; }
 echo "gesture service ready."
+[[ "$MODE" == "live" ]] && echo "The robot is in the MuJoCo window (drag with the mouse to turn the view). Leave it open."
 
 BEFORE=$(ls -d speech/runs/20*/ 2>/dev/null | sort | tail -1 || true)
 if [[ "${DRY_RUN:-0}" == "1" ]]; then   # testing this script without a microphone: reuse the last session
@@ -51,10 +62,16 @@ fi
 sleep 2   # let the last reply's motion request finish before stopping the service
 stop_service
 trap - EXIT
+if [[ "$MODE" == "live" ]]; then
+  echo
+  echo "live motion (full log: $LOG):"
+  grep -E "^\[live\] .*(replies|pieces after|first pieces|FELL|->)" "$LOG" || true
+fi
 
 SESSION=${SESSION%/}
 echo
 echo "making the conversation video for $SESSION..."
+[[ "$MODE" == "live" ]] && echo "(made again offline from the recording: its gestures differ from the ones you just saw live)"
 uv run gesture replay --session "$SESSION" $VIDEO_FLAG 2>&1 | grep -E "^\[conversation\]|^\[generate\]|^\[render\]|^conv_|WARNING|Error" \
   | sed 's/features.*foot lock/foot lock/'
 OUT="$REPO/logs/gesture/conversations/conv_$(basename "$SESSION")"

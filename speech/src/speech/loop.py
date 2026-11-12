@@ -94,8 +94,10 @@ class Pipeline:
         messages = self.llm.build_messages(history, transcript["text"])
         if self.streaming:
             player = self.player(output_device) if output_device is not None else None
+            self.gesture.start_turn(turn)
             reply, speech, tts_info = stream_reply(self.llm, self.tts, messages, timer,
-                                                   self.cfg["stream"], player, KOKORO_SAMPLE_RATE)
+                                                   self.cfg["stream"], player, KOKORO_SAMPLE_RATE,
+                                                   on_event=self.gesture.live_event)
             save_json(turn / "request.json", {"model": self.llm.cfg["model"], "messages": messages})
             save_json(turn / "reply.json", reply)
             save_wav(turn / "reply.wav", speech, KOKORO_SAMPLE_RATE)

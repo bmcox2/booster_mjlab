@@ -303,7 +303,7 @@ turns a session into a dubbed video. Choosing takes 20–40 ms; foot lock (~0.1 
 (~0.15–0.25 s, largely redundant after foot lock) are the runtime parts to trim before streaming.
 Live test 2026-11-11 (`tools/live_test.sh`, standard script): all 10 turns got motion, Boston: "looks natural". **Step 6 done.**
 
-## Step 7. Streaming: motion live, ready before its audio (next; planned 2026-11-11)
+## Step 7. Streaming: motion live, ready before its audio (built 2026-11-11; live mic test pending)
 
 **Why:** today motion is made after the robot has finished speaking (step 6). A robot needs each
 reply's motion *before* the matching audio plays, and the hands lead the voice by 0.44 s. Doing it
@@ -338,6 +338,25 @@ robot will use.
 K1 gesturing live in a MuJoCo window, in sync with its voice; for pieces after the first, motion
 ready ≥ 0.44 s before its audio; the first piece's lateness measured; no falls; the conversation's
 response time not worse than 1.47 s median (first live test).
+
+**Result (2026-11-11, `uv run gesture live`, `gesture/stream.py` + `gesture/live.py`; details in `log.md`):**
+- Built as sketched: one process holds the library, the session timeline and the policy in plain MuJoCo
+  with a window; the speech loop sends `/begin`, `/piece` (audio, word times, play time), `/end`.
+- Per piece: planning ~100 ms in total, but the first half second of motion is out after 30–50 ms
+  (foot lock is done and published in 0.5 s chunks), so a plan may change the timeline from now + 0.1 s.
+- **`ground_clip` dropped:** the stream locks the feet on one stance for the whole session (fixed at start
+  from the persona's units), at a fixed height with level soles. Feet move 0.002 mm, lowest foot point
+  0.00 mm. The stance frame is smoothed with a trailing average, so nothing already sent changes.
+- **First piece: option 3 (start at the LLM's first words).** Its matched motion can only start ~0.09 s
+  after its audio (0.53 s later than ideal). The pre-start gesture (chosen without audio, fairly lively)
+  begins 0.43 s median before the audio (0.25–0.62 s) and costs no latency.
+- Measured by re-sending the first live test's session with its recorded timing (`--replay-session`):
+  pieces after the first ready 1.22 s median before their audio, all started on time (within 0.04 s);
+  0 falls with pushes + 40 ms delay; control loop never late (max 0.7 ms).
+- **Left for exit:** the standard live test with the microphone (`tools/live_test.sh`): does it look in
+  sync, and is the response time still ≤ 1.47 s median with the sim running next to Kokoro.
+- Not built: barge-in cancel (task 5), a video of the live motion itself (the after-video is made again
+  offline), keeping the pre-start unit to its end instead of cutting into it (try if starts look twitchy).
 
 ## Step 8. Later (notes only, don't build yet)
 

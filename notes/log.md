@@ -1210,8 +1210,42 @@ Analysis only: no code changed, nothing trained. Reviewed the repo notes and rec
 - **Boston:** "Gesturing is doing really good and looks natural." Context (LLM tags) will still help. Happy with how it's coming together
 - **Step 6 exit met** (live conversation, every turn writes a reference, replay video in sync)
 
+## 2026-11-11: gesture step 7 (streaming): the K1 gestures live, motion before its audio
+
+**Built**
+- `uv run gesture live` (`gesture/live.py`): one process with three threads. Control loop: policy `y1r48dhc` in plain MuJoCo (`sim2sim`'s robot) in real time, one reference frame per 20 ms, shown in a MuJoCo window. Planner: keeps 3 s of idle planned ahead and turns speech events into motion. HTTP server on the offline service's address (127.0.0.1:8765), answers at once
+- `gesture/stream.py`, `MotionStream`: the session timeline of 50 Hz frames (joint positions, velocities, trunk orientation: all the policy sees). A plan (a few units) replaces the timeline from its first frame: stitched at 50 fps from the source clips, crossfaded with what was there, foot-locked, published. Viterbi with the unit playing at the splice fixed; no unit back within 60 s across the session
+- Speech loop: `streaming.stream_reply(on_event=...)` reports `begin` (first words exist), `piece` (voiced; audio, word times, when it will play = end of the previous piece or now, + output latency), `end` (when each piece really played). `speech/gesture.py` posts them from a background thread; `/health` says whether the live or the offline service is running, no config change
+- `--replay-session speech/runs/<session>`: re-sends a recorded session's events with their recorded timing (no mic needed; `--replay-audio` plays the replies, `--no-viewer --push --obs-delay-steps 2` for checks). Each run: `logs/gesture/live/<time>/` (`pieces.jsonl`, `summary.json`, `timeline.npz`)
+- `tools/live_test.sh` now starts `gesture live` (`--offline` = step 6's `gesture serve`) and prints the live timing summary. Tests: `tests/test_gesture_stream.py` (4)
+
+**Decisions and problems (in order)**
+- **Stance fixed for the session**, not per reply: each foot's median place in the stance frame over 300 of the persona's units (feet 17.9 cm apart), fixed height, level soles. **`ground_clip` dropped** (feet move 0.002 mm, lowest foot point 0.00 mm)
+- Stance smoothing is a **trailing** 0.8 s average (step 3's was centered, which needs 0.4 s of future): replacing the timeline from frame f never changes what was sent before f
+- First spoken unit: knee at 0.03 rad, feet missed by 1.3 cm on 19 frames, legs held, then an 11.7 rad/s jump. The unit stood narrower with straight knees, so from its own trunk height the session's wider stance is out of reach -> trunk height adjusted per frame so neither leg is longer than in the unit's own pose -> 0 unreachable frames
+- Planning took 140-190 ms per piece (foot lock ~0.7 ms per frame), so plans could only change the timeline from now + 0.25 s -> foot lock + publish in 0.5 s chunks: first frames out in 30-50 ms, **margin 0.1 s**
+- **First piece** (plays the moment it is voiced): pre-start gesture at `begin`, chosen without audio (units ~0.3 sd livelier than their take's mean). A first version waited for the estimated play time and started 0.05 s *after* the audio (Kokoro is faster than the estimate: ~0.25 s per second of speech) -> starts at once
+- MuJoCo window crashed at start under Wayland (GLib: settings key 'antialiasing') -> `PYGLFW_LIBRARY_VARIANT=x11`, set in `live`
+- Speech features per piece: loudness / onsets z-scored with running statistics of the session's voice (`RunningFeatures`); the session's very first piece is scored on itself
+
+**Results** (session `2026-11-11_21-34-08` re-sent with its recorded timing: 10 replies, 21 pieces, 82 s; pushes + 40 ms delay)
+
+| | |
+|---|---|
+| Falls | 0; max drift 4.5 cm |
+| Control loop late | p99 0.0 ms, max 0.7 ms; 0 frames without a reference, 0 plans too late |
+| Pieces after the first: motion ready before its audio | **1.22 s median**, min 0.35 s (2 of 11 under 0.44 s: a short first piece leaves little time); all started on time (within 0.04 s) |
+| First piece: matched motion | starts 0.09 s after its audio (0.53 s later than ideal) |
+| First piece: pre-start gesture | begins **0.43 s median before the audio** (0.25-0.62 s) |
+| Planning per piece | ~100 ms median, 175 ms max |
+
+- Real `stream_reply` + real Kokoro + a silent stand-in for the speaker (4 replies): all pieces got motion, pre-start 0.44-0.90 s before the audio
+- **Not tested yet:** the standard live test with the microphone (needs Boston): how it looks, and whether response time stays <= 1.47 s median with the sim running next to Kokoro. Step 7's exit criteria wait on that
+- Not built: barge-in cancel; a video of the live motion itself (`live_test.sh`'s video is made again offline, so its gestures differ); priming the voice statistics from an earlier session
+- Laptop: `nvidia-smi` failed tonight (no driver; see CLAUDE.md gotchas). `gesture live` doesn't need the GPU
+
 ## Next
-Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). **Next: streaming, `gesture_plan.md` step 7 (design + measurements written down; start in a new chat).** Other options: context layer (LLM emphasis/pointing tags), streaming (motion live, before its audio: needed for the robot), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
+Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). Step 7 (streaming) built 2026-11-11: `uv run gesture live`, tested by re-sending a recorded session. **Next: the standard live test with the mic (`tools/live_test.sh`): watch the K1 gesture live, check response time <= 1.47 s median; then barge-in cancel.** Other options: context layer (LLM emphasis/pointing tags), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)

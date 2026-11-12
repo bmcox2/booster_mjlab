@@ -179,19 +179,34 @@ def simulate_playback(ready: list[float], durations: list[float]) -> tuple[list[
 
 
 def stream_reply(llm, tts, messages: list[dict], timer, chunk_cfg: dict, player: Player | None,
-                 sample_rate: int, print_text: bool = True) -> tuple[dict, np.ndarray, dict]:
+                 sample_rate: int, print_text: bool = True, on_event=None) -> tuple[dict, np.ndarray, dict]:
     """Stream one reply: LLM -> chunks -> TTS worker -> player. Returns (reply, audio, tts_info).
 
     Marks on `timer`: llm_first_chunk, tts_first_audio, tts_done, and (with a player)
     playback_start, playback_end.
+
+    on_event(kind, data): told as things happen, for live gestures (speech/gesture.py). Times are
+    time.monotonic() at the speaker (buffer time + output latency).
+        "begin": the first piece's text exists (not voiced yet)
+        "piece": a piece was voiced and queued; "play_time" = when it will start playing
+        "end":   the reply finished; "played" = when each piece really started
     """
     chunk_queue: queue.Queue = queue.Queue()
     chunks: list[dict] = []
     errors: list[BaseException] = []
+    latency = player.latency if player is not None else 0.0
+
+    def emit(kind: str, data: dict) -> None:
+        if on_event is not None and player is not None:  # live gestures need real playback times
+            try:
+                on_event(kind, data)
+            except Exception:  # gestures must never break the conversation
+                pass
 
     def tts_worker():
         try:
             position = 0  # samples into the whole reply
+            free_at = 0.0  # when the speaker finishes the pieces queued so far
             while (item := chunk_queue.get()) is not None:
                 index, text = item
                 audio, info = tts.synthesize(text)
@@ -213,6 +228,11 @@ def stream_reply(llm, tts, messages: list[dict], timer, chunk_cfg: dict, player:
                 position += len(audio)
                 if player is not None:
                     player.add(audio, index)
+                    # Pieces play back to back, so this one starts when the previous ends (or now).
+                    play_time = max(ready, free_at)
+                    free_at = play_time + len(audio) / sample_rate
+                    emit("piece", {"index": index, "text": text, "audio": audio, "sample_rate": sample_rate,
+                                   "words": info["words"], "play_time": play_time + latency})
             timer.mark("tts_done")
         except BaseException as e:  # surface errors from the thread instead of hanging
             errors.append(e)
@@ -230,6 +250,7 @@ def stream_reply(llm, tts, messages: list[dict], timer, chunk_cfg: dict, player:
         for text in text_chunks:
             if sent == 0:
                 timer.mark("llm_first_chunk")
+                emit("begin", {"text": text, "t": time.monotonic()})
             chunk_queue.put((sent, text))
             sent += 1
 
@@ -285,6 +306,7 @@ def stream_reply(llm, tts, messages: list[dict], timer, chunk_cfg: dict, player:
     if player is not None and player.started_at:
         starts = [player.started_at.get(c["index"]) for c in chunks]
         gaps, measured = player.underrun_s, True
+        emit("end", {"played": [None if s is None else s + latency for s in starts]})
         timer.mark("playback_start", starts[0])
         timer.mark("playback_end", player.ended_at or time.monotonic())
         timer.extra["output_latency_s"] = round(player.latency, 4)
