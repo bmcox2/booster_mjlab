@@ -29,6 +29,15 @@ from speech.config import latest_turn, load_config
 
 SENTENCE_END = re.compile(r"[.!?](\s|$)")
 
+# gpt-oss writes dashes despite the prompt ("Got it—just a chat"). Spoken, a dash is a short pause,
+# like a comma; as text, "it—just" would count as one word for word timing. Per character, so it
+# works on streamed pieces. Non-breaking hyphens ("full‑body") become plain ones.
+SPEAKABLE = str.maketrans({"\u2014": ", ", "\u2013": ", ", "\u2011": "-", "\u2018": "'", "\u2019": "'"})
+
+
+def speakable(piece: str) -> str:
+    return re.sub(r" *, +", ", ", piece.translate(SPEAKABLE))
+
 
 class ThinkFilter:
     """Drop <think>...</think> blocks from streamed text. qwen3.8-27b sometimes starts its reply
@@ -106,7 +115,7 @@ class ChatModel:
             if chunk.usage:  # the last chunk carries the token counts
                 usage = chunk.usage.model_dump()
             if chunk.choices and chunk.choices[0].delta.content:
-                piece = thinking.feed(chunk.choices[0].delta.content)
+                piece = speakable(thinking.feed(chunk.choices[0].delta.content))
                 if not pieces and not piece.strip():
                     continue  # nothing speakable yet (thinking block, leading newlines)
                 if first_token_seconds is None:
@@ -116,7 +125,7 @@ class ChatModel:
                     first_sentence_seconds = time.monotonic() - start
                 if on_text:
                     on_text(piece)
-        tail = thinking.flush()
+        tail = speakable(thinking.flush())
         if tail and (pieces or tail.strip()):
             pieces.append(tail)
             if on_text:

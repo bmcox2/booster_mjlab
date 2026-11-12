@@ -42,9 +42,10 @@ compute_type = "int8"        # "float16" on GPU
 provider = "groq"
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
-model = "qwen/qwen3.8-27b"    # 2026-11-10: keeps to the length limit (12.5 words median, max 20 on live test 2);
-                             # gpt-oss-20b ignored it (16.5 / 44). Also: openai/gpt-oss-20b, openai/gpt-oss-120b
-# reasoning_effort = "low"   # only for the gpt-oss models (they think before answering)
+model = "openai/gpt-oss-120b"  # 2026-11-12: qwen3.8-27b ends replies early ("Sounds good. Talk to": 9/12 cut off
+                             # on session 2026-11-12_14-51-16, 5-7/12 with effort none / fixed history, also garbles);
+                             # gpt-oss-120b 0/12, 8.5 words median, first token 0.40 s (20b: 0/12, 0.26 s, uses dashes)
+reasoning_effort = "low"     # only for the gpt-oss models (they think before answering)
 max_tokens = 400             # 2026-11-11: without a cap Groq assumed a 1,272-token reply and refused qwen3.8-27b
                              # (free tier: 1,000 output tokens/min). Replies are ~40 tokens; room left for thinking
 system_prompt = """You are a friendly robot talking out loud. Reply in plain spoken English, \

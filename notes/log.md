@@ -1304,8 +1304,23 @@ Goal: a less robotic voice without slower responses (now 1.5-1.6 s, Kokoro `bm_d
 - Cloud whole-piece time is close to idle Kokoro; the live gain comes from Kokoro slowing under load (0.65 s) and from the voice itself. Playing from the first bytes would save another ~0.1 s (not built)
 - Recommendation: Orpheus as the free main voice with 2 pieces per reply (first piece + the rest) to stay under 10 requests/min; Cartesia for demos (faster, real word times)
 
+## 2026-11-12: speech: qwen cut replies short → gpt-oss-120b; Orpheus free-tier limits
+
+Live test (`speech/runs/2026-11-12_14-51-16`, 10 turns in 80 s, Orpheus `troy`) sounded off: the last reply was "Sounds good. Talk to", then `[tts] orpheus failed (rate limited for 6 s ... RPM Limit 10, Used 10)` and the rest played in Kokoro's voice.
+
+### Problems & fixes
+- **The cut-off came from the LLM, not TTS**: `reply.json` already says "Sounds good. Talk to" (6 tokens, `finish_reason` stop). Same session: turns 7–8 lost their final "?" / ".", turn 1 "thank you you". Re-sending turns 7–10 to `qwen/qwen3.8-27b` 3× each: **9/12 cut off**; `reasoning_effort = "none"` 8/12; with the cut-off assistant replies in the history repaired (period added) 7/12 (5/12 with effort none, first token 2.3 s) and garbled text ("pretty strong strength that powerful muscles strong")
+- Groq models on this key: only qwen3.8-27b, gpt-oss-20b / -120b (no llama). gpt-oss on turns 8–10 4× each: **0/12 cut off** for both; 120b first token 0.40 s, 20b 0.26 s but writes dashes against the prompt
+- **LLM → `openai/gpt-oss-120b`, `reasoning_effort = "low"`** (`speech/config.toml`). All 90 recorded turns (6 sessions, 2026-11-11/12) re-sent through `ChatModel`: **0/90 cut off, 11 words median (max 25), first token 0.35 s median** (max 2.15; qwen ~0.26)
+- gpt-oss writes em dashes ("Got it—just a chat"), non-breaking hyphens and curly quotes: `speakable()` in `speech/src/speech/llm.py` turns dashes into commas (word timing splits "it—just" correctly) on every streamed piece
+- **Orpheus free tier is the "credits" limit**: 10 requests/min and 100/day (headers: `x-ratelimit-limit-requests 100`, 80 left after this test). This session made ~20 requests (2 pieces per reply + warm-up) in 80 s. When limited, the remaining pieces switch to Kokoro's British voice mid-reply. Options: Groq Dev tier (pay-as-you-go, $22 / M characters), Cartesia main, Kokoro for testing / Orpheus for demos, or 1 request per reply (+~0.25 s; Orpheus synthesis ≈ 0.29 s + ~0.04 s/word). **Decision: leave as is for now**
+
+### Takeaways
+- Check `reply.json` before blaming TTS: it holds exactly what the LLM said
+- The bot has no name in the system prompt: gpt-oss calls itself "ChatGPT" / "RoboChat"
+
 ## Next
-Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). Step 7 (streaming) built 2026-11-11: `uv run gesture live`, tested by re-sending a recorded session. Live test with live gestures done 2026-11-11 (all on time, 0 falls, "nothing glaring"; response 1.59 s, onnxruntime CPU fix since). **Next: robot session 2026-11-12, card `notes/robot_session_2026-11-12.md` (rehearse on `fake_robot.py` first).** Speech voice (2026-11-11): pick a voice (`cd speech && uv run python -m speech.voices --engine orpheus`, `--engine cartesia`), set `[tts] engine`; for Orpheus, 2 pieces per reply (10 requests/min limit); then `tools/live_test.sh` and compare response time with 1.59 s. Then: watch `logs/gesture/live/2026-11-11_22-12-50/live.mp4`, re-check response time on the next live test, barge-in cancel. Other options: context layer (LLM emphasis/pointing tags), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
+Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). Step 7 (streaming) built 2026-11-11: `uv run gesture live`, tested by re-sending a recorded session. Live test with live gestures done 2026-11-11 (all on time, 0 falls, "nothing glaring"; response 1.59 s, onnxruntime CPU fix since). **Next: robot session 2026-11-12, card `notes/robot_session_2026-11-12.md` (rehearse on `fake_robot.py` first).** Speech voice: Orpheus `troy` (2026-11-11); LLM gpt-oss-120b (2026-11-12, qwen cut replies short); Orpheus free tier runs out in fast chats (left as is). Then `tools/live_test.sh` and compare response time with 1.59 s. Then: watch `logs/gesture/live/2026-11-11_22-12-50/live.mp4`, re-check response time on the next live test, barge-in cancel. Other options: context layer (LLM emphasis/pointing tags), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)
@@ -1348,7 +1363,9 @@ Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gestur
 **2. Speech loop on the laptop** (no robot; `speech_plan.md`, numbers in `speech_bench.md`). Steps 1–4 done (2026-11-08 → 2026-11-11): hands-free, streaming, response 1.8 s median. **Paused.** When it resumes:
 - Step 5 barge-in (talk over the robot to stop it; PipeWire echo cancel on laptop speakers; needs the K1 mic check for the robot)
 - Voice: less robotic (Groq Orpheus is fast but 100 req/day free; ElevenLabs / Cartesia free tiers; GPU Kokoro when the dGPU is back). < 1 s needs first audio ≤ ~0.15 s
-- Watch: qwen empty replies (retry logs `retried_empty` in reply.json), `<think>` tags, short replies waiting 0.8 s under the strict end-of-turn rule
+- Watch: empty replies (retry logs `retried_empty` in reply.json; seen with qwen, LLM is gpt-oss-120b since 2026-11-12), short replies waiting 0.8 s under the strict end-of-turn rule
+- Orpheus free tier (10/min, 100/day) runs out in fast chats; when it matters: Groq Dev tier or Cartesia, and keep one voice per reply (no mid-reply switch to Kokoro)
+- Give the bot a name in the system prompt (gpt-oss calls itself "ChatGPT")
 - Personality / system prompt; step 6 tool calls; Pipecat spike (optional)
 
 **3. Hardware / people**
