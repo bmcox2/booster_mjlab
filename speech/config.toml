@@ -61,11 +61,32 @@ sentence_pause_ms = 300      # pause between pieces after . ! ? (Kokoro's own pa
 clause_pause_ms = 150        # pause after , ; :
 
 [tts]
-engine = "kokoro"
+engine = "kokoro"            # "kokoro" (CPU, free) | "orpheus" (Groq) | "elevenlabs" | "cartesia" (speech/src/speech/tts.py)
+fallback = "kokoro"          # voices a piece when the cloud engine fails or hits a rate limit; "" = none
+# Kokoro settings (also used by the fallback):
 voice = "bm_daniel"          # British male; picked 2026-11-08 from `uv run python -m speech.voices`
-sample_rate = 24000          # Kokoro's output rate
+sample_rate = 24000          # every engine is asked for 24 kHz
 device = "cpu"               # "cuda" when the GPU is back
 cpu_threads = 4              # fastest on this laptop's CPU (notes/speech_bench.md); default was 14
+
+[tts.orpheus]                # Groq, same key as the LLM. Free tier: 100 requests/day, 1,200 characters/min
+api_key_env = "GROQ_API_KEY"
+model = "canopylabs/orpheus-v1-english"
+voice = "daniel"             # male: austin, daniel, troy; female: autumn, diana, hannah
+timeout_s = 3.0
+
+[tts.elevenlabs]             # https://elevenlabs.io: free account, API key in speech/.env
+api_key_env = "ELEVENLABS_API_KEY"
+model = "eleven_flash_v2_5"  # their low-latency model (~75-100 ms on their side)
+voice = "JBFqnCBsd6RMkjVDRZzb"  # "George", British male premade voice (voice IDs: `uv run python -m speech.voices --list elevenlabs`)
+timeout_s = 3.0
+
+[tts.cartesia]               # https://play.cartesia.ai: free account, API key in speech/.env
+api_key_env = "CARTESIA_API_KEY"
+model = "sonic-3.6"
+api_version = "2026-08-14"   # required Cartesia-Version header
+voice = "ef191366-f52f-447a-a398-ed8c0f2943a1"  # "Archie", British male (also "Daniel" en-US: 47c38ca4-5f35-497b-b1a3-415245fb35e1)
+timeout_s = 3.0
 
 [gesture]
 # notes/gesture_plan.md steps 6-7: K1 motion for each reply, from a service in the main repo. Which

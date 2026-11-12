@@ -8,6 +8,10 @@ generator is the main work now (`roadmap.md`). Step 4 (streaming) resumes when t
 connected live; step 5 (barge-in) waits for a K1 mic recording with the motors running (the
 robot hears its own voice and motors).
 
+**2026-11-11: TTS engines.** Groq Orpheus, ElevenLabs Flash and Cartesia Sonic added next to Kokoro
+(`[tts] engine`, Kokoro fallback). Blind test: Orpheus and Cartesia sound human; voice not picked yet
+(`uv run python -m speech.voices --engine orpheus|cartesia`). Numbers in `speech_bench.md`.
+
 **Goal of the stage:** talk to the laptop and get a spoken reply that starts **< ~1 s** after you
 stop talking, can be interrupted, and can call fake robot skills. Built so that every stage's
 output can be inspected and replayed on its own, the same way `beat2_batch.py` caches per stage.

@@ -332,3 +332,22 @@ Two complaints, both confirmed in the data:
    Test set with the new rule: 0 / 12 cut, median 224 ms, but "What's your name?" and "Yeah." now
    wait 0.8 s and `fillers` hits the 2 s fallback. A pause longer than ~1.1 s after a complete
    sentence still ends the turn: that ambiguity needs barge-in (step 5), so you can just keep talking.
+
+## 2026-11-11: cloud TTS engines vs Kokoro (speed, word times, by ear)
+
+Engines in `speech/src/speech/tts.py` (`[tts] engine`), Kokoro fallback on any cloud failure.
+`speech/bench/tts_compare.py`: first piece of 12 live replies (whole piece voiced; first-bytes
+time recorded), and 3 whole replies stitched as the stream plays them (`runs/_voices/compare/`).
+
+| Engine | First piece median / p90 / max | First bytes | Word times | Free tier |
+|---|---|---|---|---|
+| Kokoro `bm_daniel`, CPU 4 threads (idle laptop) | 0.36 / 0.46 / 0.51 s | n/a | real | unlimited |
+| Groq Orpheus `daniel` | 0.35 / 0.47 / 0.51 s | 0.17 s | estimated | 10 req/min, 100/day, 1,200 chars/min |
+| ElevenLabs `eleven_flash_v2_5`, George | 0.20 / 0.29 / 0.30 s | 0.20 s | real (per letter) | 10k credits/month (Flash ~0.5 credit/char) |
+| Cartesia `sonic-3.6`, Archie | 0.23 / 0.39 / 0.74 s | 0.14 s | real | 20k chars/month |
+
+- Live, Kokoro's first piece took 0.65 s (CPU shared with VAD and `gesture live`); cloud times don't depend on the laptop's load.
+- **Blind test (Boston, level-matched):** Cartesia and Orpheus sound human, Kokoro and ElevenLabs Flash robotic.
+- **Orpheus word times are estimated** (`estimate_word_times`: words spread over voiced 10 ms frames by syllable count, +1 for a word ending in punctuation; loudness threshold 6% of peak, dips < 80 ms filled). Against Kokoro's real word times, 60 live pieces / 282 words (`bench/word_times.py`): **55 ms median, 160 ms p90, 452 ms max**; even spread 159 / 350 ms. Variants: letters instead of syllables 52-59 ms; no punctuation bonus ~110 ms.
+- Loudness: ElevenLabs ~4 dB louder (peak 0.95); `gesture live` z-scores loudness per session, so it doesn't matter there.
+- **Orpheus rate limit is requests per minute (10)**, not characters: the compare run was cut off after ~10 quick requests. With ~3 pieces per reply that is ~3 turns/min. Fix to try: first piece + rest of the reply as one piece (Orpheus caps a request at 200 characters; `max_words` 25 stays under it).

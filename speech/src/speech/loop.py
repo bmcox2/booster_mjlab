@@ -46,8 +46,7 @@ class Pipeline:
         self.stt = SpeechToText(cfg["stt"])  # loads + warms up its providers
         self.tts = TextToSpeech(cfg["tts"])
         self.llm = ChatModel(cfg["llm"])
-        # Warm-up: the first use of a model is slower than the rest (memory setup, caches).
-        self.tts.synthesize("Ready.")
+        self.tts.warm_up()  # the first use of a model is slower than the rest (memory, caches, connection)
         self.streaming = cfg.get("stream", {}).get("enabled", False)
         self.players: dict[int, Player] = {}  # one open speaker stream per output device
         self.gesture = GestureClient(cfg.get("gesture", {}))  # K1 motion per reply (gesture service)

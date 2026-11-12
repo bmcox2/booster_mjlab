@@ -18,8 +18,9 @@ Audio devices are chosen in Ubuntu Settings → Sound (`config.toml` uses `pipew
 | `uv run python -m speech.audio` | Record + play back (`--play FILE`, `--devices`) | mic → `input.wav` |
 | `uv run python -m speech.stt [TURN]` | Speech-to-text (faster-whisper) | `input.wav` → `transcript.json` |
 | `uv run python -m speech.llm [TURN]` | Reply (Groq, OpenAI-compatible API) | `transcript.json` → `request.json`, `reply.json` |
-| `uv run python -m speech.tts [TURN]` | Text-to-speech (Kokoro) + play (`--no-play`) | `reply.json` → `reply.wav`, `tts.json` (word times) |
-| `uv run python -m speech.voices [NAMES]` | Compare Kokoro voices | → `runs/_voices/<voice>.wav` |
+| `uv run python -m speech.tts [TURN]` | Text-to-speech + play (`--no-play`, `--engine kokoro\|orpheus\|elevenlabs\|cartesia`) | `reply.json` → `reply.wav`, `tts.json` (word times) |
+| `uv run python -m speech.voices [NAMES]` | Compare voices (`--engine orpheus\|cartesia`, `--list` for Cartesia) | → `runs/_voices/<engine>_<voice>.wav` |
+| `uv run python bench/tts_compare.py` | TTS engines: first-piece speed + samples; `--listen-only` = blind test | `runs/_bench/tts_compare.json` |
 | `uv run python -m speech.loop --hands-free` | Conversation without Enter presses (VAD ends your turn after `[vad] silence_ms`) | same files + `vad` info in `timing.json` |
 | `uv run python -m speech.vad [--testset] [--silence-ms N]` | Live speech detector (saves each utterance), or replay the test set to see cut sentences | → `runs/_vad/<time>/utt_NN.wav/.json` |
 | `uv run python -m speech.latency [--mode testset] [--last N]` | Median / p90 time per stage, per setup | `runs/latency.jsonl` |

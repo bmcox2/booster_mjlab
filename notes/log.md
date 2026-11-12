@@ -1275,8 +1275,37 @@ Analysis only: no code changed, nothing trained. Reviewed the repo notes and rec
 - **Session card: `notes/robot_session_2026-11-12.md`** (what runs where, rehearsal, the steps with commands and stop rules, measurements, questions for the lead, troubleshooting)
 - `booster_deploy` commit `e72b603` on its local `gesture-tracking` branch (not pushed: club repo)
 
+## 2026-11-11: speech: cloud TTS engines + blind voice test (Kokoro vs Orpheus vs ElevenLabs vs Cartesia)
+
+Goal: a less robotic voice without slower responses (now 1.5-1.6 s, Kokoro `bm_daniel` CPU 0.5-0.7 s for the first piece live).
+
+### Setup
+- `speech/src/speech/tts.py`: one interface, 4 engines (`[tts] engine` in `speech/config.toml`): `kokoro`, `orpheus` (Groq, same key), `elevenlabs`, `cartesia`. All 24 kHz + word times; a failed / rate-limited cloud call voices that piece with Kokoro (`fallback = "kokoro"`, `"engine"` in tts.json). Streaming pieces and `gesture live` unchanged (same `synthesize` output)
+- Keys `ELEVENLABS_API_KEY`, `CARTESIA_API_KEY` added to `speech/.env` (gitignored; pasted in chat, rotate later)
+- Kokoro on GPU not possible: dGPU off the PCI bus again (`nvidia-smi` fails, not in `lspci`)
+- Orpheus gives no word times (the gesture generator cuts at word starts): `estimate_word_times` spreads words over the voiced audio by syllables (+1 before punctuation). Vs Kokoro's real times on 60 live pieces (`speech/bench/word_times.py`): **55 ms median / 160 ms p90** start error (even spread 159 / 350)
+
+### Results
+- `uv run python bench/tts_compare.py` (first piece of 12 live replies; `runs/_bench/tts_compare.json`):
+
+| Engine | First piece median / p90 | First bytes | Word times |
+|---|---|---|---|
+| Kokoro `bm_daniel` (CPU, idle) | 0.36 / 0.46 s (live 0.65) | n/a | real |
+| Groq Orpheus `daniel` | 0.35 / 0.47 s | 0.17 s | estimated |
+| ElevenLabs Flash v2.5 (George) | **0.20 / 0.29 s** | 0.20 s | real (letters) |
+| Cartesia Sonic 3.6 (Archie) | 0.23 / 0.39 s | 0.14 s | real |
+
+- **Blind listening test** (`--listen-only`, 3 live replies, level-matched): **Boston: Cartesia and Orpheus "by far the best, both sound very human"; Kokoro and ElevenLabs Flash "very robotic".** Little difference between the two; choice = which voice he likes
+- **Orpheus free tier = 10 requests/min** (429 message), plus 100/day, 1,200 characters/min (headers count characters). A live reply is ~3 pieces = 1 request each, so ~3 turns/min would hit it. Cartesia free: 20k characters/month (~250 turns). No student plans found (Groq, Cartesia); ElevenLabs has an AI Student Pack (not pursued). Groq pay-as-you-go Orpheus $22 / M characters (~$0.02 per 10-turn conversation); Cartesia Pro $5/month for 100k
+- `uv run python -m speech.voices --engine orpheus | cartesia [--list]`: voice sampler for the cloud engines; samples (Orpheus 6 voices, Cartesia 8 shortlisted) cached in `speech/runs/_voices/`, replay costs no requests
+- Live test (`tools/live_test.sh`) not run: voice not chosen yet
+
+### Takeaways
+- Cloud whole-piece time is close to idle Kokoro; the live gain comes from Kokoro slowing under load (0.65 s) and from the voice itself. Playing from the first bytes would save another ~0.1 s (not built)
+- Recommendation: Orpheus as the free main voice with 2 pieces per reply (first piece + the rest) to stay under 10 requests/min; Cartesia for demos (faster, real word times)
+
 ## Next
-Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). Step 7 (streaming) built 2026-11-11: `uv run gesture live`, tested by re-sending a recorded session. Live test with live gestures done 2026-11-11 (all on time, 0 falls, "nothing glaring"; response 1.59 s, onnxruntime CPU fix since). **Next: robot session 2026-11-12, card `notes/robot_session_2026-11-12.md` (rehearse on `fake_robot.py` first).** Then: watch `logs/gesture/live/2026-11-11_22-12-50/live.mp4`, re-check response time on the next live test, barge-in cancel. Other options: context layer (LLM emphasis/pointing tags), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
+Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). Step 7 (streaming) built 2026-11-11: `uv run gesture live`, tested by re-sending a recorded session. Live test with live gestures done 2026-11-11 (all on time, 0 falls, "nothing glaring"; response 1.59 s, onnxruntime CPU fix since). **Next: robot session 2026-11-12, card `notes/robot_session_2026-11-12.md` (rehearse on `fake_robot.py` first).** Speech voice (2026-11-11): pick a voice (`cd speech && uv run python -m speech.voices --engine orpheus`, `--engine cartesia`), set `[tts] engine`; for Orpheus, 2 pieces per reply (10 requests/min limit); then `tools/live_test.sh` and compare response time with 1.59 s. Then: watch `logs/gesture/live/2026-11-11_22-12-50/live.mp4`, re-check response time on the next live test, barge-in cancel. Other options: context layer (LLM emphasis/pointing tags), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)

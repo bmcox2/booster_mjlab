@@ -79,5 +79,8 @@ def config_label(cfg: dict) -> str:
     if stt.get("prompt"):
         stt_name += "+hints"
     stream = "+stream" if cfg.get("stream", {}).get("enabled") else ""
-    return (f"stt={stt_name} | llm={cfg['llm']['model']} | "
-            f"tts={cfg['tts']['voice']}@{cfg['tts'].get('cpu_threads', 'default')}threads{stream}")
+    tts = cfg["tts"]
+    engine = tts.get("engine", "kokoro")
+    tts_name = (f"{tts['voice']}@{tts.get('cpu_threads', 'default')}threads" if engine == "kokoro"
+                else f"{engine}/{tts[engine]['voice']}")
+    return f"stt={stt_name} | llm={cfg['llm']['model']} | tts={tts_name}{stream}"
