@@ -303,10 +303,44 @@ turns a session into a dubbed video. Choosing takes 20–40 ms; foot lock (~0.1 
 (~0.15–0.25 s, largely redundant after foot lock) are the runtime parts to trim before streaming.
 Live test 2026-11-11 (`tools/live_test.sh`, standard script): all 10 turns got motion, Boston: "looks natural". **Step 6 done.**
 
-## Step 7. Later (notes only, don't build yet)
+## Step 7. Streaming: motion live, ready before its audio (next; planned 2026-11-11)
 
-- **Streaming:** when speech step 4 streams TTS sentence by sentence, run the search per sentence,
-  with the previous sentence's last unit fixed. Retrieval needs no future audio beyond the sentence.
+**Why:** today motion is made after the robot has finished speaking (step 6). A robot needs each
+reply's motion *before* the matching audio plays, and the hands lead the voice by 0.44 s. Doing it
+live on the laptop, with the K1 gesturing in a MuJoCo window as it talks, is the same path the
+robot will use.
+
+**What's known (measured 2026-11-11, `log.md`):**
+- Speech streams a reply in pieces (`speech/src/speech/streaming.py`: chunker -> TTS worker -> `Player`);
+  `tts.json` records each piece's ready and played times. **Piece 0 plays the moment it's ready** (no
+  lookahead); later pieces were ready ~2.6 s before playing.
+- Generator cost per reply: choosing (features + search + stitch) 20–40 ms; foot lock ~0.1 s; grounding
+  (`ground_clip`) 0.15–0.25 s, largely redundant after foot lock; QC + forward-kinematics conversion are
+  offline extras (the policy only needs joint positions, joint velocities and trunk orientation).
+- The tracker takes 50 Hz references with no position input (`y1r48dhc`); `deploy/` has `Reference`,
+  `build_observation`, `ObservationHistory`; `sim2sim.py` has the plain-MuJoCo loop.
+
+**Design sketch (to refine in the new session):**
+1. One process, `gesture live`: holds the library, a **session timeline** of 50 Hz reference frames
+   (always a few seconds of idle ahead of "now"), and runs the policy in plain MuJoCo in real time
+   with a viewer, reading the timeline.
+2. The speech loop sends **piece events**: text, word timings, the piece's audio, and when it will play
+   (`time.monotonic()`, shared by processes on one machine). Hook point: where `Player` queues a piece.
+3. Per piece: segment, candidates, Viterbi with the previous unit fixed; replace the timeline from
+   max(now + margin, play time − 0.44 s). Stitch and foot-lock incrementally on a stance fixed at
+   session start; try dropping `ground_clip` (check the feet stay on the floor).
+4. **The first piece has no lookahead.** Options: delay its playback ~0.3–0.5 s (costs latency), start
+   its motion late, or begin an "about to speak" gesture at the LLM's first token (before audio exists).
+   Measure, then choose.
+5. Barge-in (speech step 5) later must cancel queued motion too.
+
+**Exit criteria:** the standard live test (`tools/live_test.sh`, `notes/live_test_script.md`) with the
+K1 gesturing live in a MuJoCo window, in sync with its voice; for pieces after the first, motion
+ready ≥ 0.44 s before its audio; the first piece's lateness measured; no falls; the conversation's
+response time not worse than 1.47 s median (first live test).
+
+## Step 8. Later (notes only, don't build yet)
+
 - **Context layer (semantic gestures + emphasis)**: design agreed 2026-11-11, after watching step 3
   (`log.md`: beats-only already reads as natural; what's missing is gestures that follow the words).
   Build after steps 4–5.
