@@ -41,7 +41,9 @@ Three processes, not one:
 - **Speaker:** C-Media USB adapter, ALSA card 0 (`aplay -D plughw:0,0`), loud at 100% (`amixer -c 0 set PCM 60%`).
   `aplay`'s default is the Jetson's silent internal audio. The speech loop finds devices by name (`find_device`), so a
   name like "USB Audio" in the config should be enough.
-- **Mics:** datasheet: circular 6-mic array in the head. Not yet seen from Linux.
+- **Mics:** datasheet: circular 6-mic array in the head. **Seen 2026-11-12: iFlytek XFM-DP-V0.0.18 USB board, ALSA
+  card 1** (`arecord -D plughw:1,0 -r 16000 -c 1` works; PulseAudio shows it as a mono 16 kHz source). It dropped off
+  USB while the robot was moved and needed a reboot: check `cat /proc/asound/cards` before each test.
 - **Booster SDK audio service** (`booster_robotics_sdk_python` 1.6.3 on PyPI, cp310–cp314 aarch64 wheels; example
   `python_example/sdk_pybind_audio_example.py`; headers say K1 | T1 | T2):
   - `AudioManager`: `GetDevices`, system volume / mute, Bluetooth.
@@ -52,11 +54,14 @@ Three processes, not one:
   - `AiClient.StartAiChat` / `StopAiChat` (Booster's own voice assistant: needs their cloud), `LuiClient` (their
     ASR/TTS). Nothing documents how to keep their assistant from holding the mic.
   - Needs `ChannelFactory.Instance().Init(0, <net if>)` (DDS). Unknown whether the robot's firmware matches SDK 1.6.3.
+    Robot interfaces (2026-11-12): `enP9p1s0` 192.168.10.102, `enP8p1s0` 192.168.13.101, `usb_eth0` 192.168.127.101.
+  - Booster's `ensure-booster-alsa-config` manages `/etc/asound.conf`: choose devices by name, don't edit it. Their
+    `booster-audio` already publishes mic audio (`/booster/audio/capture/slot_1..8`) and has a wake-word/DOA library.
 
 ## Unknowns: probe first (10 min of robot time, read-only)
 
-1. **Internet from the robot** (Groq, TTS). Campus Wi-Fi (IllinoisNet is WPA2-Enterprise) or a phone hotspot.
-   `curl` timing to `api.groq.com`.
+1. **Internet from the robot** (Groq, TTS): **yes, IllinoisNet** (2026-11-12, `10.193.195.162`; JoinNow renewal due
+   2026-12-18). Left: `curl` timing to `api.groq.com`.
 2. **Mic access:** does the array show in `arecord -l` / PipeWire-PulseAudio (`pactl list short sources`), or only
    through Booster's audio service? Is their assistant or audio service holding it (`fuser -v /dev/snd/*`,
    `systemctl list-units | grep -i -E 'audio|ai|rtc|lui'`)?

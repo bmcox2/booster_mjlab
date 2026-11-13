@@ -1321,17 +1321,111 @@ Live test (`speech/runs/2026-11-12_14-51-16`, 10 turns in 80 s, Orpheus `troy`) 
 
 ## 2026-11-12: robot session: gesture tracker on the real K1 (floor)
 
-From `booster_deploy` commit `2ed4b62` (2026-11-13); details not written down at the session are marked open.
+First session on the real robot (card: `notes/robot_session_2026-11-12.md`). Policy `y1r48dhc`
+(`Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation`), task `k1_gesture_tracking` in `~/projects/booster_deploy`.
+Laptop work, analysis and the logging change were done with Claude over SSH; the runs were done by Boston at the robot.
 
-- **Floor: 4 runs of `k1_gesture_tracking` (`y1r48dhc`), no falls**, each ending with a handover to Walking (Booster's
-  balance controller). `k1_gesture_tracking` now exits to Walking by default; a safety stop still goes limp
-- **Speaker:** C-Media USB adapter, ALSA card 0 (`aplay -D plughw:0,0`), very loud at 100% (`amixer -c 0 set PCM 60%`).
-  `aplay`'s default device is the Jetson's internal audio (no speaker)
-- Added after the session: every real run writes `logs/run_<task>_<time>.npz`, read with `scripts/check_run.py`
-  (loop timing, tilt, tracking error, ankle torque chatter). The `run_*20261113-153927.npz` on the laptop is the
-  fake-robot test of that, not robot data
-- **Open (not recorded):** which clips ran, mic recordings (quiet / motors on), laptop ↔ robot ping, compute module,
-  robot IP and network, whether the robot has internet
+### Setup
+- **Robot computer:** hostname `robot`, Jetson Orin NX, Ubuntu 22.04.5, aarch64. User `booster`; **password in
+  `secrets/k1_access.md` (gitignored: this repo is public)**. Laptop shortcuts in `~/.ssh/config`: `ssh k1`, `ssh k1-cable`
+- **Cable:** robot port `enP9p1s0` = `192.168.10.102` (Booster's default). Laptop USB-C Ethernet set to static
+  `192.168.10.10/24`, no gateway (`nmcli con mod "Wired connection 1" ipv4.method manual ipv4.addresses 192.168.10.10/24 ipv4.gateway ""`).
+  Before that the laptop had no IPv4 on the cable; `ping -6 ff02::1%eth0` found the robot by its IPv6 link-local address
+- **Wi-Fi:** IllinoisNet, robot at **`10.193.195.162`** (DHCP, may change; `hostname -I` over the cable), reachable from
+  the laptop on IllinoisNet (ping 22–102 ms), robot has internet (chrony synced)
+- **Robot clock was 6 days behind** (Fri Nov 6 10:26): no RTC battery (RTC reads 1970); `fake-hwclock` +
+  `fix-clock-after-rtc.service` restore the last saved time at boot, `chrony` only fixes it once online. Set by hand
+  from the laptop: `sudo date -s @$(date +%s)` (laptop's epoch), then `sudo fake-hwclock save`
+- `scripts/sync_to_robot.sh --check`: ROS setup `/opt/booster/BoosterRos2Interface/install/setup.bash`; **system
+  python3 OK** (onnxruntime 1.22.0, torch 2.7.0; no venv needed), also `~/booster_deploy/.venv` OK; 364 GB free.
+  `scripts/sync_to_robot.sh` copied 34 MB to `~/booster_deploy_gesture`. `pytest tests/test_gesture_tracking.py`: 2 passed
+
+### Runs
+- **Dry run 1** (`--dry-run`, 18:45:59): `check_dry_run.py` → 3 CHECKs, all from the robot **sitting** (hip pitch −1.99,
+  knees 0.0, trunk tilt 21°, nothing moving), not from a bug. Loop 20.0 ms median, `/low_state` 491 Hz
+- **Dry run 2** (18:47:43, robot standing under Booster's controller): all ok (tilt 1.8°, inside limits) except the
+  first-target CHECK: knees 0.47–0.56 rad, right elbow yaw 0.35 (limit 0.3). Booster stands straight-legged (hips 0.00,
+  knees 0.11), the policy's home is a crouch (hips −0.4, knees 0.8); a real run ramps to home with X first. Left/right
+  pairs symmetric (shoulder roll −1.46 / +1.45, elbow yaw −0.51 / +0.50): no joint order or sign problem visible
+- **Skipped** (Boston's call, time): Step 6 arm sign check, Steps 7–8 gantry. Straight to the floor
+- **Floor, 4 runs, no falls**, spotter's hand close but not holding; robot stood on its own:
+
+  | Time | Clip | Exit | Notes |
+  |---|---|---|---|
+  | 18:52 | `demo_intro` `--audio` | Damping (old default) | no sound (below) |
+  | 18:57 | `ayana_0_9_9_t52-69` | Walking | not filmed |
+  | 19:00 | `ayana_0_11_11_t8-23` `--audio` | Walking | filmed `IMG_6338`; no sound |
+  | 19:00:45 | `demo_intro` `--audio` | Walking | filmed `IMG_6339`; no sound |
+
+  Every run: policy 50.0 Hz (max step 26–31 ms), `/low_state` 487–496 Hz, Walking ~0.5 s after Ctrl-C.
+  Boston: "the movements aren't very dynamic" (BEAT2 gestures are small; Ayana 11_11 is the calmest pick on purpose)
+- Command: `python3 scripts/deploy.py --task k1_gesture_tracking --motion $M/<clip>.npz [--audio $M/<clip>.wav]`, `x`, then `r`
+
+### Audio
+- **Speaker:** C-Media USB adapter = ALSA card 0, `PCM` 37/37 (100%). `/etc/asound.conf` makes `aplay`'s default the
+  Jetson's internal `APE` (no speaker), so `--audio` was silent. `aplay -D plughw:0,0 demo_intro.wav` played,
+  **very loud**. Lower it first next time: `amixer -c 0 set PCM 60%`
+- **Mic: iFlytek XFM-DP-V0.0.18** (USB, high speed, port `1-2.2.1`, ALSA **card 1**; PulseAudio source mono 16 kHz).
+  It **dropped off USB** at 18:42:32 (back after 1 s with `buffer overrun`) and again at **18:44:15 for good**, between the
+  dry runs while the robot was being moved: card 1 vanished, PulseAudio recorded pure zeros, `APE` capture hung.
+  **A reboot brought it back.** Loose cable or power dip, unknown
+- Quiet recording after the reboot (`arecord -D plughw:1,0 -d 15 -f S16_LE -r 16000 -c 1 ~/mic_quiet.wav`, nobody
+  near, someone talking ~5 m away): mean −65 dBFS, loudest 0.1 s −48.5, quietest −94, **14% exact-zero samples** (the
+  board likely gates silence itself), no clipping. Not tested: voice at 1 m, motors running, echo of its own speaker
+- Booster's `booster-audio` logs `perception file parse error: missing or invalid Audio field` (falls back to
+  PulseAudio) and `boosteraec_playback not found`. `booster-rtc-speech` (their voice assistant) is running
+- Files on the laptop: `logs/robot_session_2026-11-12/` (`mic_quiet.wav`, both dry-run logs)
+
+### Robot facts for the onboard work
+- **Network interfaces:** `enP9p1s0` = `192.168.10.102` (the cable port), `enP8p1s0` = `192.168.13.101`,
+  `usb_eth0` = `192.168.127.101` (internal; one of these is the DDS interface the Booster SDK's
+  `ChannelFactory.Init(0, <net if>)` needs: check which `booster_deploy` / ROS use), `wlP1p1s0` = Wi-Fi.
+  Saved Wi-Fi besides IllinoisNet: `SigRobotics_5G` (out of range in the lab)
+- **Booster audio stack:** `booster-audio` (`/opt/booster/BoosterAudio/bin/`) publishes mic audio on its own channels
+  `/booster/audio/capture/slot_1..8`, ships a wake-word + direction-of-arrival library (`libduerwen_wakeup_DOA*.so`), and
+  its script `ensure-booster-alsa-config` **manages `/etc/asound.conf`** (and `/etc/alsa/conf.d/99-booster-audio.conf`):
+  pick devices by name in our code, don't hand-edit those files. `/opt/booster/perception_info.yaml` lists only
+  `Camera: BoosterMipi`. Other Booster services running: `booster-rtc-speech`, `booster-lui`, `booster-agent-manager`
+- **Mic channels:** PulseAudio offers the mic as `mono-fallback` 16 kHz; the SDK docs say its raw stream is 3-channel.
+  Only mono was recorded: check `arecord -D hw:1,0 --dump-hw-params` for the real channel count
+- **The mic shares an internal USB hub with `/dev/ttyACM0`** (WCH USB serial, `1-2.2.3`, possibly part of the control
+  system), so a software USB reset of the mic's port was not tried while the robot was powered
+- Robot has Firefox (snap), `xwininfo`, X11 forwarding on; user `booster` is in `sudo` and `audio`
+
+### Videos
+- `logs/robot_session_2026-11-12/videos/`: `IMG_6338.MOV` / `IMG_6339.MOV` (iPhone, 4K 60 fps) and **dubbed 1080p**
+  `k1_real_ayana_0_11_11_t8-23_dubbed.mp4`, `k1_real_demo_intro_dubbed.mp4` (clip audio in place of room sound)
+- Alignment: arm-region frame differences vs the clip's arm joint speed. Ayana: clip start **2.02 s** into the video
+  (r 0.62; the phone/robot timestamps said 1.9 s). demo_intro: two peaks (4.80 s r 0.61, 6.26 s r 0.57); the timestamps
+  (offset calibrated on Ayana) allow 5.9–7.9 s → **6.26 s**. Run logs now record the clip start time, so next time
+  this is exact
+- Dubbing command (`D` = clip start in ms):
+  `ffmpeg -i IMG.MOV -i <clip>.wav -filter_complex "[0:v]scale=-2:1920,fps=30[v];[1:a]adelay=D:all=1,apad[a]" -map "[v]" -map "[a]" -c:v libx264 -crf 20 -c:a aac -shortest out.mp4`.
+  ffmpeg 6.1 ends this with "No space left on device" (exit 228) although the file is complete (`apad` + `-shortest`
+  quirk; disk had 88 GB free): check with `ffmpeg -v error -i out.mp4 -f null -`
+
+### Problems & fixes
+- **IllinoisNet down:** `EAP-MSCHAPV2: Password expired (error 648)` for the robot's NetID (PEAP; server certificate
+  accepted). Fixed by Boston; the robot still logs in with PEAP. Illinois' certificate renewal (JoinNow, SecureW2
+  "IllinoisNet-TLS") is due **before 2026-12-18**. Its Linux client (`linux/SecureW2_JoinNow.run`, Python, console UI)
+  logs in through Firefox and reads the result from window titles, so it needs `ssh -X` on the robot (has Firefox +
+  `xwininfo`, X11 forwarding on). Copied to `~/SecureW2_JoinNow.run` on the robot
+- **Ctrl-C went limp** (`exit_mode="damping"`): `k1_gesture_tracking` now exits to **Walking**; a safety stop still damps;
+  `--exit-mode damping` on the gantry. Worked on 3 floor runs
+- **No run data from real runs** (only dry runs logged): every real run now writes `logs/run_<task>_<time>.npz`
+  (`--no-log` to skip): joint state, torques, targets, IMU, wall-clock time, tracked reference frame. Saved in 5 s parts,
+  merged at the end; killed runs recoverable. `scripts/check_run.py`: timing, video-sync times, tilt, tracking error
+  per body part, torques + ankle chatter, near-limit time. Tested on `fake_robot.py` (50.0 Hz, max step 22 ms; killed
+  run recovered; dry run still 0 commands). `booster_deploy` commit `2ed4b62` (local branch), **not yet on the robot**
+- Silent `--audio`: device (above); `--audio` doesn't pick card 0 yet
+- Wi-Fi SSH timed out once right after a sync, then worked: keep the cable in for floor runs (an SSH drop stops the run)
+
+### Takeaways
+- The sim → real path works: same policy, no retraining, stood and gestured on the floor, clean handover to Walking
+- Booster's standing pose ≠ the policy's home pose: the dry run's first-target CHECK under Booster's controller is expected
+- Mic and speaker exist and work as plain ALSA devices (cards 1 and 0), which the onboard plan needs; the mic's USB link
+  is fragile under motion
+- Still untested on hardware: arm joint signs (Step 6), ankle gains / chatter (now measurable from run logs), gantry
 
 ## 2026-11-13: plan: full conversation onboard the K1 by Thursday 2026-11-19
 
@@ -1373,7 +1467,10 @@ Current step: **full conversation onboard the K1 by Thursday 2026-11-19: `notes/
   ```
   Then `eval-tracking --task Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation-History10 ...` on `heldout-val:v0` + `val:v1`, `tools/eval_summary.py` vs `y1r48dhc` (193/194, 3.82 cm; val 468/472, 4.57 cm), and `sim2sim` from standing on the 15 held-out clips. Adopt if clearly better; watch iteration time (input 1220 vs 122)
 - ~~EMAGE smoke test~~ deferred 2026-11-11 to `gesture_plan.md` step 5 (optional extra comparison): retrieval doesn't depend on it, and step 2 holds the riskier question
-- **Thursday robot session:** dry run + `check_dry_run.py`, gantry hold; ask/test whether the SDK can drive arms + head while Booster's controller holds the legs; record the K1 mics with motors running; time laptop ↔ robot round trip; note the compute module
+- ~~**Thursday robot session**~~ **done 2026-11-12**: 2 dry runs, 4 floor runs, no falls (gantry and sign check skipped). Not done: SDK arms + head while Booster holds the legs, mics with motors running, compute module (`free -h`)
+- **Next robot access (before anything else):** `cd ~/projects/booster_deploy && ROBOT=booster@10.193.195.162 scripts/sync_to_robot.sh` (run logs + Walking exit, commit `2ed4b62`); `amixer -c 0 set PCM 60%` before any sound; check `cat /proc/asound/cards` shows card 1 (iFlytek mic) after moving the robot
+- Robot follow-ups: Step 6 arm sign check (gantry, `--dry-run`); film `ayana_0_9_9_t52-69` (the energetic clip) with a run log → `scripts/check_run.py` (ankle chatter, tracking, real vs reference size); mic at 1 m, motors on, own-speaker echo; `--audio` → card 0 by name (`plughw:CARD=Device,DEV=0`); ask the lead: mic cable (dropped out under motion), ankle firmware gains
+- **IllinoisNet certificate renewal (JoinNow) before 2026-12-18** for the robot (`~/SecureW2_JoinNow.run`, run over `ssh -X` as `booster`, not root); credentials in `secrets/k1_access.md`
 - After Thursday: retrieval generator v0, plan in **`notes/gesture_plan.md`** (written 2026-11-11; step 0 EMAGE smoke test deferred; 1 library audio + sync check → 2 features/units → 3 matching + stitching → 4 idle/continuous → 5 evaluation vs random + real mocap → 6 speech loop hook). Start: step 1, download BEAT2 `wave16k` for 3–4 training speakers (all training takes ~9.3 GB, held-out ~2 GB)
   - **Done 2026-11-11:** Wayne, Lawrence, Miranda (most Tier A training hours with fair arm motion; Scott has only 0.5 h Tier A, Solomon/Sophie have data issues). `uv run hf download H-Liu1997/BEAT2 --repo-type dataset --local-dir ~/robotics/data/BEAT2 --include "beat_english_v2.0.0/wave16k/1_wayne_*.wav" ...` (one `--include` per speaker): 382 files, 1.4 GB. Every take has audio, none shorter than its motion. Library from them: **2,564 `train-a` clips, 8.0 h** (Wayne 2.3, Lawrence 2.6, Miranda 3.2). Only `train`/`additional` takes are in `train-a`; their `val`/`test` takes are extra test audio for step 5
   - **WAVs are mixed int16 and float32**: convert to float (int16 / 32768) before any feature

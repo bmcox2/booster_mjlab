@@ -29,3 +29,6 @@ data/
 
 # Licensed SMPL-X body models (never commit)
 assets/body_models/
+
+# Robot passwords and other credentials (local only, never commit; the repo is public)
+secrets/
