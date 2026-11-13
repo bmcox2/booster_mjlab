@@ -10,11 +10,11 @@ differences, both about the first frame:
   starting from the K1's arms-down standing pose (ARMS_DOWN) instead of GMR's zero pose (a T-pose).
   From the T-pose, frame 0 can settle with an arm swung behind the body (e.g. left shoulder pitch at
   its +70 deg limit) and the warm start then keeps it there for the whole clip: 20/152 BEAT2 clips had
-  the K1's left hand behind the trunk while the human's was in front (notes/log.md, 2026-10-16).
+  the K1's left hand behind the trunk while the human's was in front (notes/archive/log_2026-10.md, 2026-10-16).
 
 Optional ``--ik-config PATH``: use this IK config instead of GMR's ``smplx_to_k1.json``, e.g.
 ``tools/ik_configs/smplx_to_k1_torso.json`` (the K1 trunk follows the human's lower spine instead of the
-pelvis; see that file's entry in notes/log.md). GMR's K1 model has no body at the forearm tip (its
+pelvis; see that file's entry in notes/archive/log_2026-10.md, 2026-10-17). GMR's K1 model has no body at the forearm tip (its
 ``*_hand_link`` starts at the elbow), so with a custom config the model also gets two massless bodies,
 ``left_hand_end`` / ``right_hand_end``, 0.203 m down the forearm (booster's ``*_hand_end_ball``), usable
 as IK targets. They add no joints, so the .pkl columns are unchanged. GMR's files are not edited.

@@ -245,7 +245,7 @@ def write_qc(rows: list[dict], spec: dict, artifacts: dict, path: Path) -> None:
         "# BEAT2 Clip QC (Gate 1)",
         "",
         f"Generated {date.today()} by `tools/beat2_batch.py --spec {spec['_spec_path']}`. "
-        "Checks and limits: `tools/clip_qc.py` (calibration: `notes/gate1-calibration.md`). All numbers per clip: "
+        "Checks and limits: `tools/clip_qc.py` (calibration: `notes/reports/gate1-calibration.md`). All numbers per clip: "
         f"`{spec['out_dir'] / 'qc.json'}`.",
         "",
         f"- **Clips:** {len(rows)}, **{sum(bool(r['flags']) for r in rows)} flagged**, "
@@ -354,7 +354,7 @@ def main() -> None:
 
     # 1. segments (human side)
     takes, missing = bs.segment_all(spec, args.workers)
-    bs.write_report(spec, takes, missing, spec.get("segments_report") or REPO / "notes/beat2-segments.md")
+    bs.write_report(spec, takes, missing, spec.get("segments_report") or REPO / "notes/reports/beat2-segments.md")
     spec["out_dir"].mkdir(parents=True, exist_ok=True)
     (spec["out_dir"] / "segments.json").write_text(json.dumps({"cfg": asdict(spec["segment_cfg"]), "missing": missing, "takes": takes}, indent=1))
     clips = clips_from_segments(spec, takes)
@@ -389,7 +389,7 @@ def main() -> None:
             art = combine(name, [c for c in keep if name in c["sets"]], spec, args)
             if art:
                 artifacts[name] = art
-    write_qc(rows, spec, artifacts, spec.get("qc_report") or REPO / "notes/beat2-qc.md")
+    write_qc(rows, spec, artifacts, spec.get("qc_report") or REPO / "notes/reports/beat2-qc.md")
     print(f"[qc] {len(rows)} clips, {sum(bool(r['flags']) for r in rows)} flagged, "
           f"{sum(r['excluded'] for r in rows)} excluded -> {spec.get('qc_report')}")
     print(f"[done] {time.time() - t0:.0f} s")

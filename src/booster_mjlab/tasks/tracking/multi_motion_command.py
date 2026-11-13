@@ -517,7 +517,7 @@ class MultiMotionCommandCfg(MotionCommandCfg):
     quarantine_warmup_steps: int = 24_000
     """No quarantine before this env step (~1,000 iterations). In the 10-19 full-BEAT2 runs half of all
     quarantines came at it 250-600, and every clip only one of the two runs flagged was learned by the
-    end (notes/log.md 2026-10-20). Clips are still capped during the warm-up."""
+    end (notes/archive/log_2026-10.md 2026-10-20). Clips are still capped during the warm-up."""
     quarantine_share_ratio: float = 1.0
     """A quarantined clip's share of starts, as a multiple of its length share (0: never start
     there). It stays in training but is no longer oversampled. Logged to flagged_clips.json."""

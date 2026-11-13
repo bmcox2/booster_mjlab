@@ -13,7 +13,7 @@ Only numpy and onnxruntime, so the same code can run on the K1's onboard compute
   robot's standing pose, a hold at the end, and its heading aligned to the robot's.
 
 A backend (``scripts/sim2sim.py`` now; a Booster SDK one later) supplies ``RobotState`` each control
-step and applies the joint targets with the policy's PD gains. notes/demo_plan.md.
+step and applies the joint targets with the policy's PD gains. notes/archive/demo_plan.md.
 """
 
 from booster_mjlab.deploy.observation import ObservationHistory, RobotState, build_observation

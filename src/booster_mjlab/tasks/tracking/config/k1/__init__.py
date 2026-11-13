@@ -14,7 +14,7 @@ register_mjlab_task(
 )
 
 # Deployable variant: the policy sees only what the real K1 measures (joint encoders, IMU orientation
-# and turn rate) plus the reference. notes/demo_plan.md.
+# and turn rate) plus the reference. notes/archive/demo_plan.md.
 register_mjlab_task(
     task_id="Mjlab-Tracking-Flat-Booster-K1-No-State-Estimation",
     env_cfg=booster_k1_flat_tracking_env_cfg(has_state_estimation=False),

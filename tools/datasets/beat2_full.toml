@@ -12,8 +12,8 @@ out_dir = "~/robotics/data/beat2_full_torso"         # per-clip cache; one folde
 # GMR K1 IK config. Torso config (Trunk <- spine1) until the v3 config exists; then set it here,
 # use a new out_dir and name, and rerun.
 ik_config = "tools/ik_configs/smplx_to_k1_torso.json"
-segments_report = "notes/beat2-full-segments.md"
-qc_report = "notes/beat2-full-qc.md"
+segments_report = "notes/reports/beat2-full-segments.md"
+qc_report = "notes/reports/beat2-full-qc.md"
 
 [speakers]
 # Held out entirely (6). Nidal and Ayana (4-hour speakers, per the plan); 20_li (M) and 27_yingqing (F)

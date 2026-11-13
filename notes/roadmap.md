@@ -64,7 +64,7 @@ camera ─► person location ───┼─► LLM (conversation + tool calls)
 - **Tracker trained on full BEAT2:** 19 training speakers, ~29 h (Tier A standing + Tier B
   foot shifts). Winner **`1de2pner` `model_5999.pt`** (A+B). On 6 held-out speakers
   (Ayana, Kieks, Li, Nidal, Stewart, Yingqing): **194/194 clips, 0 falls, hands 3.46 cm**.
-  Training speakers' unseen takes (val): 466/474 clips, hands 4.43 cm. Details: `log.md` 10-19.
+  Training speakers' unseen takes (val): 466/474 clips, hands 4.43 cm. Details: `archive/log_2026-10.md` 10-19.
 - Lesson that keeps holding: most failures are **bad data** (retarget glitches, impossible
   poses), not RL. The sampling safety harness quarantines such clips during training.
 - Slice 0 (one Scott clip, video with audio): done except the sync check and the write-up.

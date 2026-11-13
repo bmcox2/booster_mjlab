@@ -17,7 +17,7 @@ the dataset spec's [qc] table; anything not set there uses LIMITS here.
 
 Usage (from ~/projects/booster-mjlab):
     # numbers + flags for every clip of an existing batch folder (reads <dir>/qc.json for the human side)
-    uv run python tools/clip_qc.py ~/robotics/data/beat2_batch --report notes/gate1-calibration.md \\
+    uv run python tools/clip_qc.py ~/robotics/data/beat2_batch --report notes/reports/gate1-calibration.md \\
         --leakage ~/robotics/data/beat2_batch/combined/beat2-10s-train.npz --spec tools/datasets/beat2_full.toml
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ LIMITS = {
     "fps": 30.0,
     "quat_norm_err": 1e-3,
     # Joint jump: GMR's IK flipping branch. Among the 152 v1 clips the 4 glitches were 0.92-1.57 rad;
-    # real fast motion stayed <= 0.52 rad (see notes/gate1-calibration.md).
+    # real fast motion stayed <= 0.52 rad (see notes/reports/gate1-calibration.md).
     "joint_jump_rad": 0.6,
     "root_jump_cm": 3.0,          # trunk moving > 3 cm in 1/30 s (0.9 m/s) while standing: a teleport
     # Trunk turning > 6 deg in 1/30 s. Real motion stayed <= 4 deg/frame; GMR's flips turned the trunk
@@ -95,7 +95,7 @@ LIMITS = {
     # A foot held off the floor in a standing clip (median height over the clip, from ground_clip's log):
     # a broken leg retarget (wayne_0_33_33_t7-20: 27 cm up, 89 deg tilt, human standing normally) or a
     # human foot resting on its toes, which the toeless K1 turns into standing on one leg (Katya).
-    # >= 30 mm: 71 training clips, 17-100% quarantined (1.9% below 10 mm). notes/log.md 2026-10-20.
+    # >= 30 mm: 71 training clips, 17-100% quarantined (1.9% below 10 mm). notes/archive/log_2026-10.md 2026-10-20.
     "foot_gap_mm": 30.0,
     # older checks (beat2_batch QC); clips that trained to 50/50: K1 feet <= 1.8 cm, trunk <= 1.8 cm,
     # knees 14-36 deg, 0 joint-limit frames

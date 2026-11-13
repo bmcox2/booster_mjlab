@@ -144,7 +144,7 @@ Three name schemes exist, in one physical order:
 | Hips, knees | **80 / 4** | 80 / 2 | 80 / 4 | 100 / 2 | 80 / 2 |
 | Ankles | **50 / 2** | 30 / 2 | 50 / 2 | 65 / 1 | 30 / 2 |
 
-Training also randomized gains by ±20%, so small differences are covered. Your arm gains aren't unusual: Booster's own `k1_walk` config uses 20 / 2. This partly answers `demo_plan.md` question 6.
+Training also randomized gains by ±20%, so small differences are covered. Your arm gains aren't unusual: Booster's own `k1_walk` config uses 20 / 2. This partly answers `archive/demo_plan.md` question 6.
 
 The gains are also why action scale must not be recomputed. `hoi_track.py` makes the same warning: `0.25 * effort / kp` with deployed gains doesn't reproduce the training value. Your arms use a different factor (`0.5 * 14 / 20`), so even the right gains with the default formula would give half the trained scale.
 
@@ -198,7 +198,7 @@ A 4× softer ankle roll is far outside the ±20% randomization and affects sidew
 The right ankle matches too: at home, measured (0.346, 0.329) against predicted (0.347, 0.330). All other joints read identically on both sides, so the ankles are the only parallel joints.
 
 **Keep training serial.**
-- It fits the interface: same 22 slots, and the firmware handles the linkage. This answers `demo_plan.md` question 4, pending the lead's confirmation.
+- It fits the interface: same 22 slots, and the firmware handles the linkage. This answers `archive/demo_plan.md` question 4, pending the lead's confirmation.
 - Booster's training does much the same: `hoi-dev`'s `actuator.py` (ported from `booster_train`) models the ankle as one axis with 2× armature.
 - A `-Parallel` policy would be harder to deploy. Its ankle slots hold crank targets (`k1_parallel_constants.py`), while `booster_deploy` sends serial pitch/roll.
 
@@ -301,8 +301,8 @@ Limits: one physics setup with no randomized friction, gains or masses; 15 of 19
 
 1. **Evaluate `y1r48dhc`: done.** Held-out 193/194 clips, 3.82 cm (`1de2pner` 194/194, 3.46 cm). Val 468/472, 4.57 cm (`1de2pner` 466/472, 4.39 cm). It's the deployment candidate.
 2. **Sim2sim from standing: done on 15 clips, 0 falls in 225 runs** (section above).
-3. **Ask the lead:** how the firmware applies ankle `kp`/`kd`; firmware version (the README says both ≥ 1.7.2 and ≥ 1.4); which joint limits are real; the Ctrl-C exit mode; gantry and e-stop. Update `demo_plan.md`: questions 1, 3 and 4 are mostly answered here.
+3. **Ask the lead:** how the firmware applies ankle `kp`/`kd`; firmware version (the README says both ≥ 1.7.2 and ≥ 1.4); which joint limits are real; the Ctrl-C exit mode; gantry and e-stop. Update `archive/demo_plan.md`: questions 1, 3 and 4 are mostly answered here.
 4. **Settle the ankle gains** (lead's answer or gantry test), before spending more GPU time. Retrain only if they fall outside the ±20% randomization.
 5. **Build the task** in `booster_deploy` from `main`: `mjlab_velocity`'s config + `beyond_mimic`'s playback + your `deploy/` logic. Add a golden test: the same state must give the same observation as `build_observation`.
 6. **Sim2sim in `booster_deploy`:** `K1_22dof.xml`, then parallel ankles with delay (from `hoi-dev`).
-7. **Bring-up, with the e-stop ready at every stage** (`demo_plan.md` section 6): compute without sending and check order and signs → gantry hold → gantry clip → floor with slack harness → demo. Record `/low_state` and `/joint_ctrl` in every run.
+7. **Bring-up, with the e-stop ready at every stage** (`archive/demo_plan.md` section 6): compute without sending and check order and signs → gantry hold → gantry clip → floor with slack harness → demo. Record `/low_state` and `/joint_ctrl` in every run.

@@ -96,7 +96,7 @@ too.
    Size: float32 at 16 kHz is ~64 kB/s, so all 1,236 training takes are **~9.3 GB** (40 h; 91 GB
    free on the laptop). Command pattern in `tools/export_deploy_clip.py`'s docstring.
 2. Also download held-out audio for step 5 (142 takes, ~2 GB).
-3. **Sync check** (left over from Slice 0, `plan.md` G): for 3 clips, play the dubbed video and
+3. **Sync check** (left over from Slice 0, `archive/slice0_plan.md` G): for 3 clips, play the dubbed video and
    check that a stressed word lines up with its gesture stroke. Then measure it: the
    cross-correlation between audio loudness and hand speed should peak near zero lag. Do this
    across many clips, it's one function.

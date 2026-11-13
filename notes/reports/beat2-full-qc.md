@@ -1,6 +1,6 @@
 # BEAT2 Clip QC (Gate 1)
 
-Generated 2026-10-21 by `tools/beat2_batch.py --spec tools/datasets/beat2_full.toml`. Checks and limits: `tools/clip_qc.py` (calibration: `notes/gate1-calibration.md`). All numbers per clip: `/home/boston/robotics/data/beat2_full_torso/qc.json`.
+Generated 2026-10-21 by `tools/beat2_batch.py --spec tools/datasets/beat2_full.toml`. Checks and limits: `tools/clip_qc.py` (calibration: `notes/reports/gate1-calibration.md`). All numbers per clip: `/home/boston/robotics/data/beat2_full_torso/qc.json`.
 
 - **Clips:** 16155, **5274 flagged**, 1402 severe; 1402 left out (`exclude = severe`)
 - **IK config:** `/home/boston/projects/booster-mjlab/tools/ik_configs/smplx_to_k1_torso.json`

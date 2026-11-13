@@ -16,7 +16,7 @@ Takes and their official split type (train / val / test / additional) come from 
 train_test_split.csv. Speakers, tiers and limits come from a dataset spec (tools/datasets/*.toml).
 
 Usage (from ~/projects/booster-mjlab):
-    uv run python tools/beat2_segments.py --spec tools/datasets/beat2_full.toml   # report -> notes/
+    uv run python tools/beat2_segments.py --spec tools/datasets/beat2_full.toml   # report -> notes/reports/
 """
 from __future__ import annotations
 
@@ -374,7 +374,7 @@ def main() -> None:
     spec = load_spec(args.spec)
     spec["_spec_path"] = args.spec
     takes, missing = segment_all(spec, args.workers)
-    report = args.report or spec.get("segments_report") or REPO / "notes/beat2-segments.md"
+    report = args.report or spec.get("segments_report") or REPO / "notes/reports/beat2-segments.md"
     write_report(spec, takes, missing, report)
     out = spec["out_dir"] / "segments.json"
     out.parent.mkdir(parents=True, exist_ok=True)
