@@ -1319,8 +1319,47 @@ Live test (`speech/runs/2026-11-12_14-51-16`, 10 turns in 80 s, Orpheus `troy`) 
 - Check `reply.json` before blaming TTS: it holds exactly what the LLM said
 - The bot has no name in the system prompt: gpt-oss calls itself "ChatGPT" / "RoboChat"
 
+## 2026-11-12: robot session: gesture tracker on the real K1 (floor)
+
+From `booster_deploy` commit `2ed4b62` (2026-11-13); details not written down at the session are marked open.
+
+- **Floor: 4 runs of `k1_gesture_tracking` (`y1r48dhc`), no falls**, each ending with a handover to Walking (Booster's
+  balance controller). `k1_gesture_tracking` now exits to Walking by default; a safety stop still goes limp
+- **Speaker:** C-Media USB adapter, ALSA card 0 (`aplay -D plughw:0,0`), very loud at 100% (`amixer -c 0 set PCM 60%`).
+  `aplay`'s default device is the Jetson's internal audio (no speaker)
+- Added after the session: every real run writes `logs/run_<task>_<time>.npz`, read with `scripts/check_run.py`
+  (loop timing, tilt, tracking error, ankle torque chatter). The `run_*20261113-153927.npz` on the laptop is the
+  fake-robot test of that, not robot data
+- **Open (not recorded):** which clips ran, mic recordings (quiet / motors on), laptop ↔ robot ping, compute module,
+  robot IP and network, whether the robot has internet
+
+## 2026-11-13: plan: full conversation onboard the K1 by Thursday 2026-11-19
+
+Plan: **`notes/onboard_plan.md`**.
+
+- **Decision (Boston): deployment goes all in on the robot.** Speech loop, gesture generator and tracker all run on
+  the K1, with its own mic array and speaker. The laptop is for SSH, tests and rehearsal only (no frame streaming
+  from the laptop, no laptop speaker). My first proposal (generator on the laptop streaming frames over Wi-Fi) was
+  dropped
+- Layout on the K1: P1 `deploy.py --task k1_gesture_live` (ROS 2, system Python) reads 50 Hz frames from shared
+  memory written by P2 `gesture live --robot`; P3 the speech loop posts pieces to P2 over localhost (same clock, as on
+  the laptop). Separate processes because of the GIL (planning bursts would stall the 50 Hz loop), Python versions,
+  and so a speech crash doesn't stop the body
+- **Booster SDK has a full audio service** (`booster_robotics_sdk_python` 1.6.3 on PyPI, aarch64 wheels, example
+  `sdk_pybind_audio_example.py`): `AudioCaptureStream` (mic frames by callback: `raw` 16 kHz 3-channel "BoosterAEC" and
+  an echo-cancelled `naec` stream, backend-dependent), `AudioPlayer` (PCM stream), `AudioLocalizer.GetDoaAngle()`
+  (voice direction), `AiClient.StartAiChat/StopAiChat` (Booster's assistant). Plan: plain ALSA via sounddevice first
+  (the loop finds devices by name); the SDK adapter only if the mics aren't in ALSA
+- Gesture runtime imports only numpy / scipy / mujoco (portable to the Jetson); the speech venv needs a slim robot
+  install (Silero through onnxruntime without torch, no faster-whisper / Kokoro), so **no Kokoro fallback onboard**:
+  the cloud TTS must not run out (Groq Dev tier or Cartesia)
+- Order: robot runtime + laptop rehearsal with `fake_robot.py` in the robot's exact process layout; in parallel,
+  context gestures in sim (emphasis tags, then wave / point_you / point_self); robot time: probe → audio alone →
+  canned clip → conversation on the gantry → floor
+- K1 manual (Feishu export): wired SSH `booster@192.168.10.102`, Orin NX; datasheets disagree on 8 vs 16 GB
+
 ## Next
-Current step: **gesture generator**: steps 1–3 done 2026-11-11 (`uv run gesture generate | render | check`); step 4 done 2026-11-11 (`gesture conversation`: idle + replies over a whole session, 10 min without a fall). step 6 done 2026-11-11 (live test: all 10 turns got motion, looks natural). Step 7 (streaming) built 2026-11-11: `uv run gesture live`, tested by re-sending a recorded session. Live test with live gestures done 2026-11-11 (all on time, 0 falls, "nothing glaring"; response 1.59 s, onnxruntime CPU fix since). **Next: robot session 2026-11-12, card `notes/robot_session_2026-11-12.md` (rehearse on `fake_robot.py` first).** Speech voice: Orpheus `troy` (2026-11-11); LLM gpt-oss-120b (2026-11-12, qwen cut replies short); Orpheus free tier runs out in fast chats (left as is). Then `tools/live_test.sh` and compare response time with 1.59 s. Then: watch `logs/gesture/live/2026-11-11_22-12-50/live.mp4`, re-check response time on the next live test, barge-in cancel. Other options: context layer (LLM emphasis/pointing tags), listening nods, step 5 viewer test, or speech polish (voice, timing), with the history experiment running on the club GPU. Robot session **Thursday 2026-11-12**. Speech paused after step 4 (streaming, 2026-11-11).
+Current step: **full conversation onboard the K1 by Thursday 2026-11-19: `notes/onboard_plan.md`** (decided 2026-11-13: speech loop, gesture generator and tracker all on the robot, its own mics + speaker). First: `gesture live --robot` (frames to shared memory) + `booster_deploy` task `k1_gesture_live`, rehearsed with `fake_robot.py`; `tools/robot_probe.sh` for the first robot access; then context gestures in sim (emphasis, wave / point). Tracker on the real K1: 4 floor runs 2026-11-12, no falls. Earlier "next" items (barge-in, listening nods, step 5 viewer test, history experiment) wait until after Thursday.
 
 **0. This week**
 - ~~Speech: step 3 live test 2~~ **done 2026-11-10**: 16 turns, 1 cut-off (a lone "Well,"), endpoint 0.32 s median, response 3.71 s (TTS on long replies); LLM → qwen3.8-27b + shorter-reply prompt, "Groq" hint word. Step 3 done; speech paused, resume at step 4 (`speech_bench.md`)

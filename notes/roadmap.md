@@ -1,5 +1,9 @@
 # Roadmap: A Conversational, Gesturing K1
 
+**2026-11-13:** step 1 done (4 floor runs 2026-11-12, no falls). **Step 6 (live conversation on the robot) is pulled
+forward to Thursday 2026-11-19, all onboard** (speech loop, generator and tracker on the K1, its own mics and
+speaker): `onboard_plan.md`. Steps 4 and 5 wait until after it.
+
 Updated 2026-11-10, after a review against 2025–2026 work (`log.md` 2026-11-10, reading list in
 `papers.md`): steps re-ordered so the gesture generator comes before more speech work. Previous
 version 2026-10-20 (in git). `proposal.md` is the approved plan; the speech/LLM layer below is its
@@ -86,12 +90,12 @@ Real "done" only after hardware deployment.
 
 | # | Step | Done when |
 |---|---|---|
-| 1 | **Hardware, canned clips** (first session Thu 2026-11-12) | Dry run passes `check_dry_run.py`; one clip on the gantry, then the floor, `/low_state` + `/joint_ctrl` recorded. Also answer: SDK arms + head while Booster's controller holds the legs? K1 mics with motors running; laptop ↔ robot round trip; compute module |
+| 1 | **Hardware, canned clips** (**done 2026-11-12**: 4 floor runs, no falls, handover to Walking) | Dry run passes `check_dry_run.py`; one clip on the gantry, then the floor, `/low_state` + `/joint_ctrl` recorded. Also answer: SDK arms + head while Booster's controller holds the legs? K1 mics with motors running; laptop ↔ robot round trip; compute module |
 | 2 | **Generated-motion smoke test** (~1 day; **deferred 2026-11-11** to `gesture_plan.md` step 5, as an extra comparison) | EMAGE offline on ~5 TTS replies → GMR → `ground_clip` → `eval-tracking` + `sim2sim`; failure causes listed |
-| 3 | **Retrieval generator v0 in sim** ← *main work now*; plan: `gesture_plan.md` | TTS WAV → 50 Hz K1 reference (matched BEAT2 clips, crossfades, idle, fixed legs); a `speech.loop` reply plays as a dubbed `sim2sim` video, synced within ~100 ms on stressed words; 2-minute continuous run, no fall |
+| 3 | **Retrieval generator v0 in sim** (done 2026-11-11, incl. streaming; context gestures next); plan: `gesture_plan.md` | TTS WAV → 50 Hz K1 reference (matched BEAT2 clips, crossfades, idle, fixed legs); a `speech.loop` reply plays as a dubbed `sim2sim` video, synced within ~100 ms on stressed words; 2-minute continuous run, no fall |
 | 4 | **Final tracker run** (after 1–3) | Exit criteria rows 1–9 met in sim: history if it wins, idle + stitched clips in training, fixed lower-body option |
 | 5 | **Speech loop streaming** (`speech_plan.md` step 4; steps 1–3 done) | First audio < 1 s median on the test set |
-| 6 | **Live conversation on the robot** | 5-minute conversation, no fall, no manual restarts |
+| 6 | **Live conversation on the robot** ← *main work now, target 2026-11-19, all onboard* (`onboard_plan.md`) | 5-minute conversation, no fall, no manual restarts |
 | 7 | **LLM tool calls:** look_at, wave, point (barge-in once the K1 audio allows it) | The LLM triggers a wave or point at the right word |
 | 8 | **Neural generator** (only if retrieval looks repetitive; paper angle), then **mobility + presenting** | Beats retrieval in a blind viewer comparison; walks and gestures |
 
